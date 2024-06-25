@@ -149,13 +149,23 @@ class CPUMonitor:
         with self.conn:
             return self.conn.execute(sql, params)
 
+    def get_moving_average(self, table_name, column_name, window_size=5):
+        # Fetch the latest 'window_size' data points from the database
+        self.c.execute(f'SELECT {column_name} FROM {table_name} ORDER BY time DESC LIMIT ?', (window_size,))
+        rows = self.c.fetchall()
+
+        # Calculate the moving average
+        moving_average = sum(row[0] for row in rows) / len(rows)
+
+        return moving_average
+
     def train_model(self):
         # Fetch the data from the SQLite database
         self.c.execute('SELECT cpu_usage, power_cost, governor FROM training_data')
         rows = self.c.fetchall()
 
         # Split the data into features (X) and target variable (y)
-        X = [[row[0], row[1]] for row in rows]
+        X = [[row[0], row[1], self.get_moving_average('cpu_usage', 'usage'), self.get_moving_average('power_cost', 'cost')] for row in rows]
         y = [row[2] for row in rows]
 
         # Split the dataset into training and testing sets
