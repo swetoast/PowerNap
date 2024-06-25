@@ -150,8 +150,13 @@ class CPUMonitor:
             return self.conn.execute(sql, params)
 
     def train_model(self):
-        # Generate a synthetic dataset for training
-        X, y = make_classification(n_samples=1000, n_features=2, n_informative=2, n_redundant=0, random_state=42)
+        # Fetch the data from the SQLite database
+        self.c.execute('SELECT cpu_usage, power_cost, governor FROM training_data')
+        rows = self.c.fetchall()
+
+        # Split the data into features (X) and target variable (y)
+        X = [[row[0], row[1]] for row in rows]
+        y = [row[2] for row in rows]
 
         # Split the dataset into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
