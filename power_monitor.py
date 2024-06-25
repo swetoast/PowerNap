@@ -113,14 +113,25 @@ class CPUMonitor:
             self.execute("INSERT INTO power_cost VALUES (?, ?)", (current_time, power_cost))
         else:
             power_cost = row[1]
-        return power_cost
+
+        # Categorize the power cost into low, mid, or high
+        low_threshold = float(self.config['cost_thresholds']['low'])
+        mid_threshold = float(self.config['cost_thresholds']['mid'])
+        high_threshold = float(self.config['cost_thresholds']['high'])
+
+        if power_cost <= low_threshold:
+            return 'low', power_cost
+        elif power_cost <= mid_threshold:
+            return 'mid', power_cost
+        else:
+            return 'high', power_cost
 
     def monitor_cpu(self, cpu):
         # Monitor the CPU usage and adjust the governor for a single CPU
         while True:
             start_time = time.time()
             usage = self.get_cpu_usage()
-            power_cost = self.get_power_cost()
+            power_cost_category, power_cost = self.get_power_cost()
             self.set_governor(cpu, usage, power_cost)
             end_time = time.time()
             self.log_energy_consumption(start_time, end_time)
