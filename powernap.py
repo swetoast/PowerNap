@@ -7,7 +7,7 @@ import nordpool.elspot, nordpool.elbas
 import configparser
 import sqlite3
 import threading
-from sklearn.externals import joblib  # Import joblib to load the model
+from sklearn.externals import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
