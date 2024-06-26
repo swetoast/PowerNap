@@ -24,7 +24,7 @@ Welcome to PowerNap! This is a Python-based tool that keeps an eye on your CPU u
     python3 -m venv env
     source env/bin/activate
     ```
-4. Install the required Python packages. The required packages are `psutil`, `cpufreq`, `eco2ai`, `nordpool`, `configparser`, `sqlite3`, `threading`, `sklearn`:
+4. Install the required Python packages.
     ```bash
     pip install psutil cpufreq eco2ai nordpool configparser sqlite3 threading sklearn
     ```
