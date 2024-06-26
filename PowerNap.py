@@ -68,7 +68,7 @@ class CPUMonitor:
     def __init__(self, config_file):
         self.config = load_config(config_file)
         self.currency = self.config['currency']['value']  # Load the currency from the configuration
-        self.db_manager = DatabaseManager('cpumonitor.db')
+        self.db_manager = DatabaseManager('monitor.db')
         self.db_manager.setup_database()
         self.model_manager = ModelManager(self.db_manager)
         self.eco2ai = Eco2AI(project_name="CPU Monitoring", experiment_description="Monitoring CPU usage and setting governor")
@@ -140,5 +140,5 @@ class CPUMonitor:
             threading.Thread(target=self.monitor_cpu, args=(cpu,)).start()
 
 if __name__ == "__main__":
-    monitor = CPUMonitor(config_file='cpumonitor.conf')
+    monitor = CPUMonitor(config_file='powernap.conf')
     monitor.monitor()
