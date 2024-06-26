@@ -1,4 +1,4 @@
-# CPU Monitor
+# PowerNap
 
 The purpose of this class is to monitor the CPU usage and adjust the CPU governor based on the prediction of a machine learning model. It also logs the energy consumption and power cost.
 
@@ -18,14 +18,17 @@ The purpose of this class is to monitor the CPU usage and adjust the CPU governo
 
 ## Configuration
 
-The script reads a configuration file (`cpumonitor.conf`) to get the necessary configuration parameters. Here's an example of a configuration file:
+The script reads a configuration file (`powernap.conf`) to get the necessary configuration parameters. Here's an example of a configuration file:
 
 ```conf
 [general]
-area = SE1
-sleep_time = 60
+area = YourArea
+sleep_time = YourSleepTime
 
 [cost_thresholds]
-low = 0.1
-mid = 0.2
-high = 0.3
+low = YourLowThreshold
+mid = YourMidThreshold
+high = YourHighThreshold
+
+[currency]
+value = SEK
