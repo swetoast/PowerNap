@@ -29,14 +29,6 @@ Welcome to PowerNap! This is a Python-based tool that keeps an eye on your CPU u
     pip install psutil cpufreq eco2ai nordpool configparser sqlite3 threading sklearn
     ```
 
-## Usage
-
-1. Update the `powernap.conf` configuration file with your desired settings.
-2. Run the script:
-    ```bash
-    python powernap.py
-    ```
-
 ## Configuration
 
 The `powernap.conf` file contains the following configuration options:
