@@ -67,11 +67,12 @@ class ModelManager:
 class CPUMonitor:
     def __init__(self, config_file):
         self.config = load_config(config_file)
+        self.currency = self.config['currency']['value']  # Load the currency from the configuration
         self.db_manager = DatabaseManager('cpumonitor.db')
         self.db_manager.setup_database()
         self.model_manager = ModelManager(self.db_manager)
         self.eco2ai = Eco2AI(project_name="CPU Monitoring", experiment_description="Monitoring CPU usage and setting governor")
-        self.prices_spot = nordpool.elspot.Prices(currency='SEK')
+        self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
 
     def get_cpu_usage(self):
         usage = psutil.cpu_percent(interval=1)
