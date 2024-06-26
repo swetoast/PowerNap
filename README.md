@@ -37,6 +37,8 @@ The `powernap.conf` file contains the following configuration options:
 - `sleep_time`: The time interval (in seconds) between each monitoring cycle.
 - `low`, `mid`, `high`: Thresholds for power cost categories.
 - `currency`: The currency for power cost.
+- `purge_after_days`: Days until purge.
+- `purge_enabled`: If purge is being used.
 
 ## Systemd Service
 
