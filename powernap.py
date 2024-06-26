@@ -71,7 +71,7 @@ class CPUMonitor:
         self.db_manager = DatabaseManager('monitor.db')
         self.db_manager.setup_database()
         self.model_manager = ModelManager(self.db_manager)
-        self.eco2ai = Eco2AI(project_name="CPU Monitoring", experiment_description="Monitoring CPU usage and setting governor")
+        self.eco2ai = Eco2AI(project_name="PowerNap", experiment_description="Monitoring CPU usage and setting governor")
         self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
 
     def get_cpu_usage(self):
