@@ -39,6 +39,14 @@ class DatabaseManager:
         with self.conn:
             return self.conn.execute(sql, params).fetchone()
 
+    def purge_old_data(self, days):
+        cutoff_time = time.time() - days * 24 * 60 * 60
+        with self.conn:
+            self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
+            self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
+            self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
+            self.conn.execute("DELETE FROM energy_consumption WHERE start_time < ?", (cutoff_time,))
+
 # Model Training and Prediction
 class ModelManager:
     def __init__(self, db_manager):
@@ -135,6 +143,10 @@ class CPUMonitor:
             print(f"Governor for CPU {cpu} set to {preferred_governor} due to {reason}. Estimated CO2 emissions: {emissions} kg, Estimated energy usage: {energy_usage} kWh.")
 
     def monitor(self):
+        purge_enabled = self.config['database']['purge_enabled'].lower() == 'yes'
+        if purge_enabled:
+            purge_after_days = int(self.config['database']['purge_after_days'])
+            self.db_manager.purge_old_data(purge_after_days)
         cpus = cpufreq.get_cpus()
         for cpu in cpus:
             threading.Thread(target=self.monitor_cpu, args=(cpu,)).start()
