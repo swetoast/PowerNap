@@ -3,5 +3,5 @@ cpufreq
 eco2ai
 nordpool
 configparser
-sklearn
+scikit-learn
 logging
