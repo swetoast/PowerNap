@@ -21,8 +21,12 @@ def load_config(config_file):
 # Separate Database Operations
 class DatabaseManager:
     def __init__(self, db_name):
-        self.conn = sqlite3.connect(db_name, check_same_thread=False)
-        self.setup_database()
+        try:
+            self.conn = sqlite3.connect(db_name, check_same_thread=False)
+            self.setup_database()
+        except Exception as e:
+            print(f"Failed to connect to the database: {e}")
+            raise
 
     def setup_database(self):
         c = self.conn.cursor()
@@ -52,10 +56,14 @@ class DatabaseManager:
 class ModelManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
-        if os.path.exists('model.pkl'):
-            self.model = load('model.pkl')
-        else:
-            self.model = self.train_model()
+        try:
+            if os.path.exists('model.pkl'):
+                self.model = load('model.pkl')
+            else:
+                self.model = self.train_model()
+        except Exception as e:
+            print(f"Failed to train or load the model: {e}")
+            raise
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
@@ -135,16 +143,17 @@ class CPUMonitor:
         else:
             power_cost = power_cost[1]
 
-        low_threshold = float(self.config['cost_thresholds']['low'])
-        mid_threshold = float(self.config['cost_thresholds']['mid'])
-        high_threshold = float(self.config['cost_thresholds']['high'])
+        thresholds = {
+            'low': float(self.config['cost_thresholds']['low']),
+            'mid': float(self.config['cost_thresholds']['mid']),
+            'high': float(self.config['cost_thresholds']['high'])
+        }
 
-        if power_cost <= low_threshold:
-            return 'low', power_cost
-        elif power_cost <= mid_threshold:
-            return 'mid', power_cost
-        else:
-            return 'high', power_cost
+        for category, threshold in thresholds.items():
+            if power_cost <= threshold:
+                return category, power_cost
+
+        return 'high', power_cost
 
     def monitor_cpu(self, cpu):
         while True:
