@@ -22,6 +22,7 @@ def load_config(config_file):
 class DatabaseManager:
     def __init__(self, db_name):
         self.conn = sqlite3.connect(db_name, check_same_thread=False)
+        self.setup_database()
 
     def setup_database(self):
         c = self.conn.cursor()
@@ -77,7 +78,6 @@ class CPUMonitor:
         self.config = load_config(config_file)
         self.currency = self.config['currency']['value']  # Load the currency from the configuration
         self.db_manager = DatabaseManager('monitor.db')
-        self.db_manager.setup_database()
         self.model_manager = ModelManager(self.db_manager)
         self.eco2ai = Eco2AI(project_name="PowerNap", experiment_description="Monitoring CPU usage and setting governor")
         self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
