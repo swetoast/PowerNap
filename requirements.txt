@@ -4,4 +4,3 @@ eco2ai
 nordpool
 configparser
 scikit-learn
-logging
