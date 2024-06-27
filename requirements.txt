@@ -3,6 +3,5 @@ cpufreq
 eco2ai
 nordpool
 configparser
-threading
 sklearn
 logging
