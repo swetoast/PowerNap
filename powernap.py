@@ -16,6 +16,13 @@ from sklearn.metrics import accuracy_score
 def load_config(config_file):
     config = configparser.ConfigParser()
     config.read(config_file)
+
+    # Check for necessary configurations
+    necessary_configs = ['currency', 'general', 'cost_thresholds', 'database']
+    for conf in necessary_configs:
+        if conf not in config:
+            raise ValueError(f"Missing necessary configuration: {conf}")
+
     return config
 
 # Separate Database Operations
