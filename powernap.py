@@ -5,12 +5,9 @@ import cpufreq
 from eco2ai import Eco2AI
 import nordpool.elspot, nordpool.elbas
 import configparser
-import sqlite3
+from sklearn import model_selection, ensemble, metrics
 import threading
-from sklearn.externals import joblib
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
+from joblib import load, dump
 import logging
 import logging.handlers
 
@@ -55,7 +52,7 @@ class ModelManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
         if os.path.exists('model.pkl'):
-            self.model = joblib.load('model.pkl')
+            self.model = load('model.pkl')
         else:
             self.model = self.train_model()
 
@@ -63,12 +60,12 @@ class ModelManager:
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
         X = [[row[0], row[1]] for row in rows]
         y = [row[2] for row in rows]
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
+        model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
-        print(f"Model accuracy: {accuracy_score(y_test, y_pred)}")
-        joblib.dump(model, 'model.pkl')
+        print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
+        dump(model, 'model.pkl')
         return model
 
     def predict_governor(self, features):
