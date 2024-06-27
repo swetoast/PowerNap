@@ -1,0 +1,9 @@
+psutil
+cpufreq
+eco2ai
+nordpool
+configparser
+sqlite3
+threading
+sklearn
+logging
