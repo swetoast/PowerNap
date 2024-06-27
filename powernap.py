@@ -58,7 +58,7 @@ class ModelManager:
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
-        X = [[row[0], row[1], self.get_moving_average('cpu_usage', 'usage'), self.get_moving_average('power_cost', 'cost')] for row in rows]
+        X = [[row[0], row[1]] for row in rows]
         y = [row[2] for row in rows]
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         model = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -140,7 +140,6 @@ class CPUMonitor:
             end_time = time.time()
             self.log_energy_consumption(start_time, end_time)
             time.sleep(self.config['general']['sleep_time'])
-            print(f"Governor for CPU {cpu} set to {preferred_governor} due to {reason}. Estimated CO2 emissions: {emissions} kg, Estimated energy usage: {energy_usage} kWh.")
 
     def monitor(self):
         purge_enabled = self.config['database']['purge_enabled'].lower() == 'yes'
