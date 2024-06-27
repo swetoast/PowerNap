@@ -11,18 +11,13 @@ from sklearn.externals import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
+import logging
+import logging.handlers
 
 # Configuration Loading
 def load_config(config_file):
     config = configparser.ConfigParser()
     config.read(config_file)
-
-    # Check for necessary configurations
-    necessary_configs = ['currency', 'general', 'cost_thresholds', 'database']
-    for conf in necessary_configs:
-        if conf not in config:
-            raise ValueError(f"Missing necessary configuration: {conf}")
-
     return config
 
 # Separate Database Operations
@@ -89,6 +84,12 @@ class CPUMonitor:
         self.eco2ai = Eco2AI(project_name="PowerNap", experiment_description="Monitoring CPU usage and setting governor")
         self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
 
+        # Set up logging
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        handler = logging.handlers.SysLogHandler(address = '/dev/log')
+        self.logger.addHandler(handler)
+
     def get_cpu_usage(self):
         usage = psutil.cpu_percent(interval=1)
         self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (time.time(), usage))
@@ -99,6 +100,15 @@ class CPUMonitor:
         governor = self.model_manager.predict_governor(features)
         cpufreq.set_governor(cpu, governor)
         self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
+
+        # Log to syslog
+        emissions = self.eco2ai.get_emissions()
+        energy_usage = self.eco2ai.get_energy_usage()
+        self.log_to_syslog(cpu, governor, emissions, energy_usage)
+
+    def log_to_syslog(self, cpu, governor, emissions, energy_usage):
+        message = f"CPU: {cpu}, Governor: {governor}, Emissions: {emissions}, Energy Consumption: {energy_usage}"
+        self.logger.info(message)
 
     def get_available_governors(self, cpu):
         governors = self.db_manager.fetch_data_from_db('SELECT governor FROM available_governors WHERE cpu = ?', (cpu,))
