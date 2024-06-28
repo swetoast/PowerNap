@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-# Standard library imports
+import os
 import configparser
 import logging
 import logging.handlers
-import os
 import sqlite3
 import threading
 import time
+from queue import Queue
 
-# Related third-party imports
-import cpufreq
 import nordpool.elbas
 import nordpool.elspot
 import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
+
+# Function to set CPU governor
+def set_cpu_governor(cpu, governor):
+    try:
+        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
+            f.write(governor)
+    except IOError as e:
+        print(f"Error setting governor: {e}")
 
 # Configuration Loading
 def load_config(config_file):
@@ -28,6 +34,8 @@ class DatabaseManager:
         try:
             self.conn = sqlite3.connect(db_name, check_same_thread=False)
             self.setup_database()
+            self.queue = Queue()
+            threading.Thread(target=self._process_queue).start()
         except Exception as e:
             print(f"Failed to connect to the database: {e}")
             raise
@@ -40,20 +48,25 @@ class DatabaseManager:
         c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, power_cost REAL, governor TEXT)''') 
 
+    def _process_queue(self):
+        while True:
+            sql, params = self.queue.get()
+            self.conn.execute(sql, params)
+            self.conn.commit()
+            self.queue.task_done()
+
     def insert_into_db(self, sql, params=()):
-        with self.conn:
-            return self.conn.execute(sql, params)
+        self.queue.put((sql, params))
 
     def fetch_data_from_db(self, sql, params=()):
-        with self.conn:
-            return self.conn.execute(sql, params).fetchone()
+        return self.conn.execute(sql, params).fetchone()
 
     def purge_old_data(self, days):
         cutoff_time = time.time() - days * 24 * 60 * 60
-        with self.conn:
-            self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
-            self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
-            self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
+        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
+        self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
+        self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
+        self.conn.commit()
 
 # Model Training and Prediction
 class ModelManager:
@@ -84,7 +97,11 @@ class ModelManager:
         return model
 
     def predict_governor(self, features):
-        return self.model.predict(features)[0]
+        if self.model is None:
+            # Return 'performance' as the default governor
+            return 'performance'
+        else:
+            return self.model.predict(features)[0]
 
 # Main Class
 class CPUMonitor:
@@ -101,6 +118,16 @@ class CPUMonitor:
         handler = logging.handlers.SysLogHandler(address = '/dev/log')
         self.logger.addHandler(handler)
 
+    def get_cpus(self):
+        """
+        This function returns a list of available CPUs on the system.
+        """
+        # Get the number of available CPUs
+        num_cpus = os.cpu_count()
+
+        # Return a list of CPUs
+        return list(range(num_cpus))
+
     def get_cpu_usage(self):
         usage = psutil.cpu_percent(interval=1)
         self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (time.time(), usage))
@@ -109,7 +136,7 @@ class CPUMonitor:
     def set_governor(self, cpu, usage, power_cost):
         features = [[usage, power_cost]]
         governor = self.model_manager.predict_governor(features)
-        cpufreq.set_governor(cpu, governor)
+        set_cpu_governor(cpu, governor)  # Use the new function here
         self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
 
         # Log to syslog
@@ -129,11 +156,14 @@ class CPUMonitor:
     def get_power_cost(self):
         current_time = time.time()
         power_cost = self.db_manager.fetch_data_from_db('SELECT * FROM power_cost WHERE time = (SELECT MAX(time) FROM power_cost)')
-        if power_cost is None or current_time - power_cost[0] >= 3600:
+        if power_cost is None or len(power_cost) == 0 or current_time - power_cost[0] >= 3600:
             prices = self.prices_spot.hourly(areas=[self.config['general']['area']])
             current_hour = time.localtime().tm_hour
-            power_cost = prices['areas'][self.config['general']['area']]['hours'][current_hour]
-            self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (current_time, power_cost))
+            if 'hours' in prices['areas'][self.config['general']['area']]:
+                power_cost = prices['areas'][self.config['general']['area']]['hours'][current_hour]
+                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (current_time, power_cost))
+            else:
+                power_cost = None  # You can set a default value here
         else:
             power_cost = power_cost[1]
 
@@ -144,7 +174,7 @@ class CPUMonitor:
         }
 
         for category, threshold in thresholds.items():
-            if power_cost <= threshold:
+            if power_cost and power_cost <= threshold:
                 return category, power_cost
 
         return 'high', power_cost
@@ -155,14 +185,14 @@ class CPUMonitor:
             usage = self.get_cpu_usage()
             power_cost_category, power_cost = self.get_power_cost()
             self.set_governor(cpu, usage, power_cost)
-            time.sleep(self.config['general']['sleep_time'])
+            time.sleep(int(self.config['general']['sleep_time']))  # Convert sleep_time to int
 
     def monitor(self):
         purge_enabled = self.config['database']['purge_enabled'].lower() == 'yes'
         if purge_enabled:
             purge_after_days = int(self.config['database']['purge_after_days'])
             self.db_manager.purge_old_data(purge_after_days)
-        cpus = cpufreq.get_cpus()
+        cpus = self.get_cpus()
         for cpu in cpus:
             threading.Thread(target=self.monitor_cpu, args=(cpu,)).start()
 
