@@ -23,6 +23,16 @@ class Governor_Manager:
         except IOError as e:
             print(f"Error setting governor: {e}")
 
+    @staticmethod
+    def get_available_governors(cpu):
+        try:
+            with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_available_governors', 'r') as f:
+                governors = f.read().strip().split(' ')
+                governors = [g for g in governors if g not in ['userspace', 'schedutil']]
+                return governors
+        except IOError as e:
+            print(f"Error getting available governors: {e}")
+
 class ConfigLoader:
     @staticmethod
     def load_config(config_file):
@@ -133,24 +143,17 @@ class CPUMonitor:
         return usage
 
     def set_governor(self, cpu, usage, power_cost):
-        features = [[usage, power_cost]]
-        governor = self.model_manager.predict_governor(features)
-        Governor_Manager.set_cpu_governor(cpu, governor)  # Use the new function here
-        self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
+        governors = Governor_Manager.get_available_governors(cpu)
+        if governors:
+            features = [[usage, power_cost]]
+            governor = self.model_manager.predict_governor(features)
+            if governor in governors:
+                Governor_Manager.set_cpu_governor(cpu, governor)
+                self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
 
         # Log to syslog
         message = f"CPU: {cpu}, Governor: {governor}"
         self.logger.info(message)
-
-    def get_available_governors(self, cpu):
-        governors = self.db_manager.fetch_data_from_db('SELECT governor FROM available_governors WHERE cpu = ?', (cpu,))
-        if governors:
-            return [row[0] for row in governors]
-        else:
-            governors = cpufreq.get_governors(cpu)
-            for governor in governors:
-                self.db_manager.insert_into_db("INSERT INTO available_governors VALUES (?, ?)", (cpu, governor))
-            return governors
 
     def get_power_cost(self):
         current_time = time.time()
