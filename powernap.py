@@ -13,7 +13,6 @@ import cpufreq
 import nordpool.elbas
 import nordpool.elspot
 import psutil
-from eco2ai import Eco2AI
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
 
@@ -38,7 +37,6 @@ class DatabaseManager:
         c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS cpu_usage (time REAL PRIMARY KEY, usage REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS governor_changes (time REAL, cpu INTEGER, governor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS energy_consumption (start_time REAL, end_time REAL, consumption REAL, emissions REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
 
     def insert_into_db(self, sql, params=()):
@@ -55,7 +53,6 @@ class DatabaseManager:
             self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
             self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
             self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
-            self.conn.execute("DELETE FROM energy_consumption WHERE start_time < ?", (cutoff_time,))
 
 # Model Training and Prediction
 class ModelManager:
@@ -92,7 +89,6 @@ class CPUMonitor:
         self.currency = self.config['currency']['value']  # Load the currency from the configuration
         self.db_manager = DatabaseManager('monitor.db')
         self.model_manager = ModelManager(self.db_manager)
-        self.eco2ai = Eco2AI(project_name="PowerNap", experiment_description="Monitoring CPU usage and setting governor")
         self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
 
         # Set up logging
@@ -113,12 +109,7 @@ class CPUMonitor:
         self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
 
         # Log to syslog
-        emissions = self.eco2ai.get_emissions()
-        energy_usage = self.eco2ai.get_energy_usage()
-        self.log_to_syslog(cpu, governor, emissions, energy_usage)
-
-    def log_to_syslog(self, cpu, governor, emissions, energy_usage):
-        message = f"CPU: {cpu}, Governor: {governor}, Emissions: {emissions}, Energy Consumption: {energy_usage}"
+        message = f"CPU: {cpu}, Governor: {governor}"
         self.logger.info(message)
 
     def get_available_governors(self, cpu):
@@ -130,12 +121,6 @@ class CPUMonitor:
             for governor in governors:
                 self.db_manager.insert_into_db("INSERT INTO available_governors VALUES (?, ?)", (cpu, governor))
             return governors
-
-    def log_energy_consumption(self, start_time, end_time):
-        self.eco2ai.log(start_time, end_time)
-        emissions = self.eco2ai.get_emissions()
-        energy_usage = self.eco2ai.get_energy_usage()
-        self.db_manager.insert_into_db("INSERT INTO energy_consumption VALUES (?, ?, ?, ?)", (start_time, end_time, energy_usage, emissions))
 
     def get_power_cost(self):
         current_time = time.time()
@@ -166,8 +151,6 @@ class CPUMonitor:
             usage = self.get_cpu_usage()
             power_cost_category, power_cost = self.get_power_cost()
             self.set_governor(cpu, usage, power_cost)
-            end_time = time.time()
-            self.log_energy_consumption(start_time, end_time)
             time.sleep(self.config['general']['sleep_time'])
 
     def monitor(self):
