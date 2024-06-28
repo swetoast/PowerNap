@@ -145,6 +145,9 @@ class CPUMonitor:
     def set_governor(self, cpu, usage, power_cost):
         governors = Governor_Manager.get_available_governors(cpu)
         if governors:
+            # Insert the available governors into the database
+            for governor in governors:
+                self.db_manager.insert_into_db("INSERT INTO available_governors VALUES (?, ?)", (cpu, governor))
             features = [[usage, power_cost]]
             governor = self.model_manager.predict_governor(features)
             if governor in governors:
