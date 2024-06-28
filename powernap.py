@@ -38,6 +38,7 @@ class DatabaseManager:
         c.execute('''CREATE TABLE IF NOT EXISTS cpu_usage (time REAL PRIMARY KEY, usage REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS governor_changes (time REAL, cpu INTEGER, governor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, power_cost REAL, governor TEXT)''') 
 
     def insert_into_db(self, sql, params=()):
         with self.conn:
