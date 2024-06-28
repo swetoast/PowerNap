@@ -70,6 +70,9 @@ class ModelManager:
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
+        if rows is None:
+            print("No training data available.")
+            return
         X = [[row[0], row[1]] for row in rows]
         y = [row[2] for row in rows]
         X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
