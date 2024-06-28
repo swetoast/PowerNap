@@ -1,6 +1,5 @@
 psutil
 cpufreq
-eco2ai
 nordpool
 configparser
 scikit-learn
