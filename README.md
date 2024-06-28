@@ -6,7 +6,6 @@ Welcome to PowerNap! This is a Python-based tool that keeps an eye on your CPU u
 
 - **Real-time CPU Usage Monitoring**: PowerNap keeps track of your CPU usage in real time.
 - **Smart Governor Adjustment**: PowerNap adjusts the CPU governor based on the current CPU usage and power cost, helping you save power.
-- **Energy Consumption Logging**: PowerNap logs energy consumption and CO2 emissions data, allowing you to understand your energy usage better.
 - **Machine Learning Model**: PowerNap uses a machine learning model to predict the optimal governor setting. It's like having a crystal ball for your CPU!
 
 ## Installation
