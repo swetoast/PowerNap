@@ -128,9 +128,6 @@ class CPUMonitor:
         self.logger.addHandler(handler)
 
     def get_cpus(self):
-        """
-        This function returns a list of available CPUs on the system.
-        """
         # Get the number of available CPUs
         num_cpus = os.cpu_count()
 
