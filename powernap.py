@@ -14,21 +14,22 @@ import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
 
-# Function to set CPU governor
-def set_cpu_governor(cpu, governor):
-    try:
-        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
-            f.write(governor)
-    except IOError as e:
-        print(f"Error setting governor: {e}")
+class Governor_Manager:
+    @staticmethod
+    def set_cpu_governor(cpu, governor):
+        try:
+            with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
+                f.write(governor)
+        except IOError as e:
+            print(f"Error setting governor: {e}")
 
-# Configuration Loading
-def load_config(config_file):
-    config = configparser.ConfigParser()
-    config.read(config_file)
-    return config
+class ConfigLoader:
+    @staticmethod
+    def load_config(config_file):
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        return config
 
-# Separate Database Operations
 class DatabaseManager:
     def __init__(self, db_name):
         try:
@@ -68,7 +69,6 @@ class DatabaseManager:
         self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
         self.conn.commit()
 
-# Model Training and Prediction
 class ModelManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
@@ -103,10 +103,9 @@ class ModelManager:
         else:
             return self.model.predict(features)[0]
 
-# Main Class
 class CPUMonitor:
     def __init__(self, config_file):
-        self.config = load_config(config_file)
+        self.config = ConfigLoader.load_config(config_file)
         self.currency = self.config['currency']['value']  # Load the currency from the configuration
         self.db_manager = DatabaseManager('monitor.db')
         self.model_manager = ModelManager(self.db_manager)
@@ -136,7 +135,7 @@ class CPUMonitor:
     def set_governor(self, cpu, usage, power_cost):
         features = [[usage, power_cost]]
         governor = self.model_manager.predict_governor(features)
-        set_cpu_governor(cpu, governor)  # Use the new function here
+        Governor_Manager.set_cpu_governor(cpu, governor)  # Use the new function here
         self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
 
         # Log to syslog
