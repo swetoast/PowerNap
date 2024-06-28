@@ -14,7 +14,7 @@ import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
 
-class Governor_Manager:
+class GovernorManager:
     @staticmethod
     def set_cpu_governor(cpu, governor):
         try:
@@ -140,7 +140,7 @@ class CPUMonitor:
         return usage
 
     def set_governor(self, cpu, usage, power_cost):
-        governors = Governor_Manager.get_available_governors(cpu)
+        governors = GovernorManager.get_available_governors(cpu)
         if governors:
             # Insert the available governors into the database
             for governor in governors:
@@ -148,7 +148,7 @@ class CPUMonitor:
             features = [[usage, power_cost]]
             governor = self.model_manager.predict_governor(features)
             if governor in governors:
-                Governor_Manager.set_cpu_governor(cpu, governor)
+                GovernorManager.set_cpu_governor(cpu, governor)
                 self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
 
         # Log to syslog
