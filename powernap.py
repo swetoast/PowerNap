@@ -76,19 +76,21 @@ class ModelManager:
         self.model = load('model.pkl') if os.path.exists('model.pkl') else self.train_model()
 
     def train_model(self):
-        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, governor FROM training_data')
+        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
         if rows is None:
             print("No training data available.")
             return
-        X = [[row[0]] for row in rows]
-        y = [row[1] for row in rows]
+        X = [[row[0], row[1]] for row in rows]  # Include power_cost in the feature set
+        y = [row[2] for row in rows]
 
         # Compute the min and max for each feature
         min_cpu_usage = min(x[0] for x in X)
         max_cpu_usage = max(x[0] for x in X)
+        min_power_cost = min(x[1] for x in X)
+        max_power_cost = max(x[1] for x in X)
 
         # Normalize the features
-        X = [[(x[0] - min_cpu_usage) / (max_cpu_usage - min_cpu_usage)] for x in X]
+        X = [[(x[0] - min_cpu_usage) / (max_cpu_usage - min_cpu_usage), (x[1] - min_power_cost) / (max_power_cost - min_power_cost)] for x in X]
 
         X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
         model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
