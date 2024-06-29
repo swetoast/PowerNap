@@ -39,8 +39,11 @@ class ConfigLoader:
 
 class DatabaseManager:
     def __init__(self, db_name):
+        # Create the full path to the monitor.db file
+        db_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), db_name)
+
         try:
-            self.conn = sqlite3.connect(db_name, check_same_thread=False)
+            self.conn = sqlite3.connect(db_path, check_same_thread=False)
             self.setup_database()
             self.queue = Queue()
             threading.Thread(target=self._process_queue).start()
@@ -86,12 +89,16 @@ class DatabaseManager:
             self.conn.commit()
         except sqlite3.Error as e:
             print(f"Failed to purge old data: {e}")
-
+            
 class ModelManager:
-    def __init__(self, db_manager):
+    def __init__(self, db_manager, model_file):
         self.db_manager = db_manager
+
+        # Create the full path to the model.pkl file
+        model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), model_file)
+
         try:
-            self.model = load('model.pkl') if os.path.exists('model.pkl') else self.train_model()
+            self.model = load(model_path) if os.path.exists(model_path) else self.train_model()
         except Exception as e:
             print(f"Failed to load or train the model: {e}")
             self.model = None
