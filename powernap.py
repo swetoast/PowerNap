@@ -210,11 +210,19 @@ class CPUMonitor:
             time.sleep(int(self.config['general']['sleep_time']))  # Convert sleep_time to int
 
     def monitor(self):
+        cpus = self.get_cpus()
+        print(f"Number of CPUs: {len(cpus)}")
+        for cpu in cpus:
+            print(f"CPU{cpu} initial governor: {GovernorManager.get_available_governors(cpu)}")
+        initial_cpu_usage = self.get_cpu_usage()
+        print(f"Initial CPU usage: {initial_cpu_usage}%")
+        initial_power_cost_category, initial_power_cost = self.get_power_cost()
+        print(f"Initial power cost: {initial_power_cost} ({initial_power_cost_category})")
+
         purge_enabled = self.config['database']['purge_enabled'].lower() == 'yes'
         if purge_enabled:
             purge_after_days = int(self.config['database']['purge_after_days'])
             self.db_manager.purge_old_data(purge_after_days)
-        cpus = self.get_cpus()
         for cpu in cpus:
             threading.Thread(target=self.monitor_cpu, args=(cpu,)).start()
 
