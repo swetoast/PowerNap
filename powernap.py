@@ -196,7 +196,7 @@ class CPUMonitor:
         }
 
         for category, threshold in thresholds.items():
-            if power_cost and power_cost <= threshold:
+            if power_cost is not None and power_cost <= threshold:
                 return category, power_cost
 
         return 'high', power_cost
