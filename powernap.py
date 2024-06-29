@@ -30,15 +30,23 @@ class ConfigLoader:
     @staticmethod
     def load_config(config_file):
         config = configparser.ConfigParser()
-        config.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), config_file))
+        try:
+            config.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), config_file))
+        except configparser.Error as e:
+            print(f"Failed to load config file: {e}")
+            raise
         return config
 
 class DatabaseManager:
     def __init__(self, db_name):
-        self.conn = sqlite3.connect(db_name, check_same_thread=False)
-        self.setup_database()
-        self.queue = Queue()
-        threading.Thread(target=self._process_queue).start()
+        try:
+            self.conn = sqlite3.connect(db_name, check_same_thread=False)
+            self.setup_database()
+            self.queue = Queue()
+            threading.Thread(target=self._process_queue).start()
+        except sqlite3.Error as e:
+            print(f"Failed to connect to the database: {e}")
+            raise
 
     def setup_database(self):
         c = self.conn.cursor()
@@ -51,27 +59,42 @@ class DatabaseManager:
     def _process_queue(self):
         while True:
             sql, params = self.queue.get()
-            self.conn.execute(sql, params)
-            self.conn.commit()
-            self.queue.task_done()
+            try:
+                self.conn.execute(sql, params)
+                self.conn.commit()
+            except sqlite3.Error as e:
+                print(f"Failed to execute SQL command: {e}")
+            finally:
+                self.queue.task_done()
 
     def insert_into_db(self, sql, params=()):
         self.queue.put((sql, params))
 
     def fetch_data_from_db(self, sql, params=()):
-        return self.conn.execute(sql, params).fetchone()
+        try:
+            return self.conn.execute(sql, params).fetchone()
+        except sqlite3.Error as e:
+            print(f"Failed to fetch data from database: {e}")
+            return None
 
     def purge_old_data(self, days):
         cutoff_time = time.time() - days * 24 * 60 * 60
-        self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
-        self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
-        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
-        self.conn.commit()
+        try:
+            self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
+            self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
+            self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"Failed to purge old data: {e}")
 
 class ModelManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
-        self.model = load('model.pkl') if os.path.exists('model.pkl') else self.train_model()
+        try:
+            self.model = load('model.pkl') if os.path.exists('model.pkl') else self.train_model()
+        except Exception as e:
+            print(f"Failed to load or train the model: {e}")
+            self.model = None
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
@@ -90,20 +113,32 @@ class ModelManager:
         # Normalize the features
         X = [[(x[0] - min_cpu_usage) / (max_cpu_usage - min_cpu_usage), (x[1] - min_power_cost) / (max_power_cost - min_power_cost)] for x in X]
 
-        X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
-        model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
-        dump(model, 'model.pkl')
-        return model
+        try:
+            X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
+            model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
+            dump(model, 'model.pkl')
+            return model
+        except Exception as e:
+            print(f"Failed to train the model: {e}")
+            return None
 
     def predict_governor(self, features):
-        return 'performance' if self.model is None else self.model.predict(features)[0]
+        if self.model is None:
+            print("Model is not available. Returning default governor 'performance'.")
+            return 'performance'
+        else:
+            return self.model.predict(features)[0]
 
 class CPUMonitor:
     def __init__(self, config_file):
-        self.config = ConfigLoader.load_config(config_file)
+        try:
+            self.config = ConfigLoader.load_config(config_file)
+        except configparser.Error as e:
+            print(f"Failed to load config file: {e}")
+            raise
         self.db_manager = DatabaseManager('monitor.db')
 
     def get_cpus(self):
@@ -118,16 +153,21 @@ class CPUMonitor:
         current_time = datetime.datetime.now()
         formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
         area = self.config['general']['area']  # Read the area from the config file
-        response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json')
-        
-        if response.status_code == 200 and response.text.strip():  # Check if the response is OK and not empty
+        try:
+            response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
+            response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching power cost data: {e}")
+            return None
+
+        if response.text.strip():  # Check if the response is not empty
             try:
                 data = response.json()
             except json.JSONDecodeError:
                 print("Error decoding JSON response")
                 return None
         else:
-            print("Error fetching power cost data")
+            print("Empty response received")
             return None
 
         # Find the current hour's data
