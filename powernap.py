@@ -1,7 +1,5 @@
 import os
 import configparser
-import logging
-import logging.handlers
 import sqlite3
 import threading
 import time
@@ -108,12 +106,6 @@ class CPUMonitor:
         self.config = ConfigLoader.load_config(config_file)
         self.db_manager = DatabaseManager('monitor.db')
 
-        # Set up logging
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        handler = logging.handlers.SysLogHandler(address = '/dev/log')
-        self.logger.addHandler(handler)
-
     def get_cpus(self):
         return list(range(os.cpu_count()))
 
@@ -122,42 +114,43 @@ class CPUMonitor:
         self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (time.time(), usage))
         return usage
 
-    def get_power_cost(self):
-        current_time = datetime.datetime.now()
-        formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
-        response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_SE3.json')
-        
-        if response.status_code == 200 and response.text.strip():  # Check if the response is OK and not empty
-            try:
-                data = response.json()
-            except json.JSONDecodeError:
-                print("Error decoding JSON response")
-                return None
-        else:
-            print("Error fetching power cost data")
+def get_power_cost(self):
+    current_time = datetime.datetime.now()
+    formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
+    area = self.config['general']['area']  # Read the area from the config file
+    response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json')
+    
+    if response.status_code == 200 and response.text.strip():  # Check if the response is OK and not empty
+        try:
+            data = response.json()
+        except json.JSONDecodeError:
+            print("Error decoding JSON response")
             return None
+    else:
+        print("Error fetching power cost data")
+        return None
 
-        # Find the current hour's data
-        for hour_data in data:
-            time_start = hour_data['time_start']
-            time_end = hour_data['time_end']
-            if time_start <= current_time.isoformat() < time_end:
-                power_cost = hour_data['SEK_per_kWh']
-                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (time.time(), power_cost))
-                
-                thresholds = {
-                    'low': float(self.config['cost_thresholds']['low']),
-                    'mid': float(self.config['cost_thresholds']['mid']),
-                    'high': float(self.config['cost_thresholds']['high'])
-                }
+    # Find the current hour's data
+    for hour_data in data:
+        time_start = hour_data['time_start']
+        time_end = hour_data['time_end']
+        if time_start <= current_time.isoformat() < time_end:
+            power_cost = hour_data['SEK_per_kWh']
+            self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (time.time(), power_cost))
+            
+            thresholds = {
+                'low': float(self.config['cost_thresholds']['low']),
+                'mid': float(self.config['cost_thresholds']['mid']),
+                'high': float(self.config['cost_thresholds']['high'])
+            }
 
-                for category, threshold in thresholds.items():
-                    if power_cost is not None and power_cost <= threshold:
-                        return category, power_cost
+            for category, threshold in thresholds.items():
+                if power_cost is not None and power_cost <= threshold:
+                    return category, power_cost
 
-                return 'high', power_cost
+            return 'high', power_cost
 
-        return None  # Return None if no matching hour is found
+    return None  # Return None if no matching hour is found
 
     def set_governor(self, cpu, usage, power_cost):
         governors = GovernorManager.get_available_governors(cpu)
@@ -177,6 +170,7 @@ class CPUMonitor:
             if governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
                 self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
+                print(f"Governor for CPU{cpu} set to {governor}")
 
     def monitor_cpu(self, cpu):
         while True:
