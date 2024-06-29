@@ -140,6 +140,7 @@ class CPUMonitor:
             print(f"Failed to load config file: {e}")
             raise
         self.db_manager = DatabaseManager('monitor.db')
+        self.power_cost_data = None
 
     def get_cpus(self):
         return list(range(os.cpu_count()))
@@ -153,25 +154,19 @@ class CPUMonitor:
         current_time = datetime.datetime.now()
         formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
         area = self.config['general']['area']  # Read the area from the config file
-        try:
-            response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
-            response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching power cost data: {e}")
-            return None
 
-        if response.text.strip():  # Check if the response is not empty
+        # Check if the data is already fetched
+        if self.power_cost_data is None or not self.is_data_available(current_time):
             try:
-                data = response.json()
-            except json.JSONDecodeError:
-                print("Error decoding JSON response")
+                response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
+                response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
+                self.power_cost_data = response.json()
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching power cost data: {e}")
                 return None
-        else:
-            print("Empty response received")
-            return None
 
         # Find the current hour's data
-        for hour_data in data:
+        for hour_data in self.power_cost_data:
             time_start = hour_data['time_start']
             time_end = hour_data['time_end']
             if time_start <= current_time.isoformat() < time_end:
@@ -191,6 +186,14 @@ class CPUMonitor:
                 return 'high', power_cost
 
         return None  # Return None if no matching hour is found
+
+    def is_data_available(self, current_time):
+        for hour_data in self.power_cost_data:
+            time_start = hour_data['time_start']
+            time_end = hour_data['time_end']
+            if time_start <= current_time.isoformat() < time_end:
+                return True
+        return False
 
     def set_governor(self, cpu, usage, power_cost):
         governors = GovernorManager.get_available_governors(cpu)
