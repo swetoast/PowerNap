@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import configparser
 import logging
@@ -9,14 +8,10 @@ import time
 from queue import Queue
 import requests
 import datetime
-
 import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
 
-def normalize_feature(value, min_value, max_value):
-    return (value - min_value) / (max_value - min_value)
-    
 class GovernorManager:
     @staticmethod
     def set_cpu_governor(cpu, governor):
@@ -26,9 +21,7 @@ class GovernorManager:
     @staticmethod
     def get_available_governors(cpu):
         with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_available_governors', 'r') as f:
-            governors = f.read().strip().split(' ')
-            governors = [g for g in governors if g not in ['userspace', 'schedutil']]
-            return governors
+            return [g for g in f.read().strip().split(' ') if g not in ['userspace', 'schedutil']]
 
     @staticmethod
     def get_current_governor(cpu):
@@ -39,21 +32,15 @@ class ConfigLoader:
     @staticmethod
     def load_config(config_file):
         config = configparser.ConfigParser()
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        full_path = os.path.join(current_dir, config_file)
-        config.read(full_path)
+        config.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), config_file))
         return config
 
 class DatabaseManager:
     def __init__(self, db_name):
-        try:
-            self.conn = sqlite3.connect(db_name, check_same_thread=False)
-            self.setup_database()
-            self.queue = Queue()
-            threading.Thread(target=self._process_queue).start()
-        except Exception as e:
-            print(f"Failed to connect to the database: {e}")
-            raise
+        self.conn = sqlite3.connect(db_name, check_same_thread=False)
+        self.setup_database()
+        self.queue = Queue()
+        threading.Thread(target=self._process_queue).start()
 
     def setup_database(self):
         c = self.conn.cursor()
@@ -80,20 +67,13 @@ class DatabaseManager:
         cutoff_time = time.time() - days * 24 * 60 * 60
         self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
         self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
-        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))  # Add this line
+        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
         self.conn.commit()
 
 class ModelManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
-        try:
-            if os.path.exists('model.pkl'):
-                self.model = load('model.pkl')
-            else:
-                self.model = self.train_model()
-        except Exception as e:
-            print(f"Failed to train or load the model: {e}")
-            raise
+        self.model = load('model.pkl') if os.path.exists('model.pkl') else self.train_model()
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, governor FROM training_data')
@@ -108,7 +88,7 @@ class ModelManager:
         max_cpu_usage = max(x[0] for x in X)
 
         # Normalize the features
-        X = [[normalize_feature(x[0], min_cpu_usage, max_cpu_usage)] for x in X]
+        X = [[(x[0] - min_cpu_usage) / (max_cpu_usage - min_cpu_usage)] for x in X]
 
         X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
         model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
@@ -119,18 +99,12 @@ class ModelManager:
         return model
 
     def predict_governor(self, features):
-        if self.model is None:
-            # Return 'performance' as the default governor
-            return 'performance'
-        else:
-            # Normalize the features
-            features = [[normalize_feature(features[0][0], min_cpu_usage, max_cpu_usage)]]
-            return self.model.predict(features)[0]
+        return 'performance' if self.model is None else self.model.predict(features)[0]
 
 class CPUMonitor:
     def __init__(self, config_file):
         self.config = ConfigLoader.load_config(config_file)
-        self.db_manager = DatabaseManager('monitor.db')  # Initialize db_manager here
+        self.db_manager = DatabaseManager('monitor.db')
 
         # Set up logging
         self.logger = logging.getLogger(__name__)
@@ -139,11 +113,7 @@ class CPUMonitor:
         self.logger.addHandler(handler)
 
     def get_cpus(self):
-        # Get the number of available CPUs
-        num_cpus = os.cpu_count()
-
-        # Return a list of CPUs
-        return list(range(num_cpus))
+        return list(range(os.cpu_count()))
 
     def get_cpu_usage(self):
         usage = psutil.cpu_percent(interval=1)
