@@ -7,9 +7,9 @@ import sqlite3
 import threading
 import time
 from queue import Queue
+import requests
+import datetime
 
-import nordpool.elbas
-import nordpool.elspot
 import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
@@ -56,11 +56,11 @@ class DatabaseManager:
 
     def setup_database(self):
         c = self.conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS cpu_usage (time REAL PRIMARY KEY, usage REAL)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')  # Add this line
         c.execute('''CREATE TABLE IF NOT EXISTS governor_changes (time REAL, cpu INTEGER, governor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, power_cost REAL, governor TEXT)''') 
+        c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, governor TEXT)''') 
 
     def _process_queue(self):
         while True:
@@ -77,9 +77,9 @@ class DatabaseManager:
 
     def purge_old_data(self, days):
         cutoff_time = time.time() - days * 24 * 60 * 60
-        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
         self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
         self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
+        self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))  # Add this line
         self.conn.commit()
 
 class ModelManager:
@@ -95,22 +95,19 @@ class ModelManager:
             raise
 
     def train_model(self):
-        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
+        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, governor FROM training_data')
         if rows is None:
             print("No training data available.")
             return
-        X = [[row[0], row[1]] for row in rows]
-        y = [row[2] for row in rows]
+        X = [[row[0]] for row in rows]
+        y = [row[1] for row in rows]
 
         # Compute the min and max for each feature
         min_cpu_usage = min(x[0] for x in X)
         max_cpu_usage = max(x[0] for x in X)
-        min_power_cost = min(x[1] for x in X)
-        max_power_cost = max(x[1] for x in X)
 
         # Normalize the features
-        X = [[normalize_feature(x[0], min_cpu_usage, max_cpu_usage), 
-              normalize_feature(x[1], min_power_cost, max_power_cost)] for x in X]
+        X = [[normalize_feature(x[0], min_cpu_usage, max_cpu_usage)] for x in X]
 
         X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
         model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
@@ -126,17 +123,13 @@ class ModelManager:
             return 'performance'
         else:
             # Normalize the features
-            features = [[normalize_feature(features[0][0], min_cpu_usage, max_cpu_usage), 
-                         normalize_feature(features[0][1], min_power_cost, max_power_cost)]]
+            features = [[normalize_feature(features[0][0], min_cpu_usage, max_cpu_usage)]]
             return self.model.predict(features)[0]
 
 class CPUMonitor:
     def __init__(self, config_file):
         self.config = ConfigLoader.load_config(config_file)
-        self.currency = self.config['currency']['value']  # Load the currency from the configuration
-        self.db_manager = DatabaseManager('monitor.db')
-        self.model_manager = ModelManager(self.db_manager)
-        self.prices_spot = nordpool.elspot.Prices(currency=self.currency)  # Use the currency from the configuration
+        self.db_manager = DatabaseManager('monitor.db')  # Initialize db_manager here
 
         # Set up logging
         self.logger = logging.getLogger(__name__)
@@ -156,6 +149,43 @@ class CPUMonitor:
         self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (time.time(), usage))
         return usage
 
+    def get_power_cost(self):
+        current_time = datetime.datetime.now()
+        formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
+        response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_SE3.json')
+        
+        if response.status_code == 200 and response.text.strip():  # Check if the response is OK and not empty
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                print("Error decoding JSON response")
+                return None
+        else:
+            print("Error fetching power cost data")
+            return None
+
+        # Find the current hour's data
+        for hour_data in data:
+            time_start = hour_data['time_start']
+            time_end = hour_data['time_end']
+            if time_start <= current_time.isoformat() < time_end:
+                power_cost = hour_data['SEK_per_kWh']
+                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (time.time(), power_cost))
+                
+                thresholds = {
+                    'low': float(self.config['cost_thresholds']['low']),
+                    'mid': float(self.config['cost_thresholds']['mid']),
+                    'high': float(self.config['cost_thresholds']['high'])
+                }
+
+                for category, threshold in thresholds.items():
+                    if power_cost is not None and power_cost <= threshold:
+                        return category, power_cost
+
+                return 'high', power_cost
+
+        return None  # Return None if no matching hour is found
+
     def set_governor(self, cpu, usage, power_cost):
         governors = GovernorManager.get_available_governors(cpu)
         if governors:
@@ -174,32 +204,6 @@ class CPUMonitor:
             if governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
                 self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
-
-    def get_power_cost(self):
-        current_time = time.time()
-        power_cost = self.db_manager.fetch_data_from_db('SELECT * FROM power_cost WHERE time = (SELECT MAX(time) FROM power_cost)')
-        if power_cost is None or len(power_cost) == 0 or current_time - power_cost[0] >= 3600:
-            prices = self.prices_spot.hourly(areas=[self.config['general']['area']])
-            current_hour = time.localtime().tm_hour
-            if 'hours' in prices['areas'][self.config['general']['area']]:
-                power_cost = prices['areas'][self.config['general']['area']]['hours'][current_hour]
-                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (current_time, power_cost))
-            else:
-                power_cost = None  # You can set a default value here
-        else:
-            power_cost = power_cost[1]
-
-        thresholds = {
-            'low': float(self.config['cost_thresholds']['low']),
-            'mid': float(self.config['cost_thresholds']['mid']),
-            'high': float(self.config['cost_thresholds']['high'])
-        }
-
-        for category, threshold in thresholds.items():
-            if power_cost is not None and power_cost <= threshold:
-                return category, power_cost
-
-        return 'high', power_cost
 
     def monitor_cpu(self, cpu):
         while True:
