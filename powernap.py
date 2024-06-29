@@ -16,31 +16,32 @@ from sklearn import ensemble, metrics, model_selection
 
 def normalize_feature(value, min_value, max_value):
     return (value - min_value) / (max_value - min_value)
-
+    
 class GovernorManager:
     @staticmethod
     def set_cpu_governor(cpu, governor):
-        try:
-            with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
-                f.write(governor)
-        except IOError as e:
-            print(f"Error setting governor: {e}")
+        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
+            f.write(governor)
 
     @staticmethod
     def get_available_governors(cpu):
-        try:
-            with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_available_governors', 'r') as f:
-                governors = f.read().strip().split(' ')
-                governors = [g for g in governors if g not in ['userspace', 'schedutil']]
-                return governors
-        except IOError as e:
-            print(f"Error getting available governors: {e}")
+        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_available_governors', 'r') as f:
+            governors = f.read().strip().split(' ')
+            governors = [g for g in governors if g not in ['userspace', 'schedutil']]
+            return governors
+
+    @staticmethod
+    def get_current_governor(cpu):
+        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'r') as f:
+            return f.read().strip()
 
 class ConfigLoader:
     @staticmethod
     def load_config(config_file):
         config = configparser.ConfigParser()
-        config.read(config_file)
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        full_path = os.path.join(current_dir, config_file)
+        config.read(full_path)
         return config
 
 class DatabaseManager:
@@ -57,7 +58,7 @@ class DatabaseManager:
     def setup_database(self):
         c = self.conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS cpu_usage (time REAL PRIMARY KEY, usage REAL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')  # Add this line
+        c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')
         c.execute('''CREATE TABLE IF NOT EXISTS governor_changes (time REAL, cpu INTEGER, governor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, governor TEXT)''') 
@@ -217,7 +218,7 @@ class CPUMonitor:
         cpus = self.get_cpus()
         print(f"Number of CPUs: {len(cpus)}")
         for cpu in cpus:
-            print(f"CPU{cpu} initial governor: {GovernorManager.get_available_governors(cpu)}")
+            print(f"CPU{cpu} initial governor: {GovernorManager.get_current_governor(cpu)}")
         initial_cpu_usage = self.get_cpu_usage()
         print(f"Initial CPU usage: {initial_cpu_usage}%")
         initial_power_cost_category, initial_power_cost = self.get_power_cost()
