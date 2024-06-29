@@ -142,18 +142,18 @@ class CPUMonitor:
     def set_governor(self, cpu, usage, power_cost):
         governors = GovernorManager.get_available_governors(cpu)
         if governors:
-            # Insert the available governors into the database
-            for governor in governors:
-                self.db_manager.insert_into_db("INSERT INTO available_governors VALUES (?, ?)", (cpu, governor))
-            features = [[usage, power_cost]]
-            governor = self.model_manager.predict_governor(features)
+            if usage > 75 and power_cost < 1/3:
+                governor = 'performance'
+            elif usage < 25 and power_cost > 2/3:
+                governor = 'powersave'
+            elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
+                governor = 'conservative'
+            else:
+                governor = 'ondemand'
+            
             if governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
                 self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
-
-        # Log to syslog
-        message = f"CPU: {cpu}, Governor: {governor}"
-        self.logger.info(message)
 
     def get_power_cost(self):
         current_time = time.time()
