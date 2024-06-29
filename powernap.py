@@ -159,14 +159,17 @@ class CPUMonitor:
     def set_governor(self, cpu, usage, power_cost):
         governors = GovernorManager.get_available_governors(cpu)
         if governors:
-            if usage > 75 and power_cost < 1/3:
-                governor = 'performance'
-            elif usage < 25 and power_cost > 2/3:
-                governor = 'powersave'
-            elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
-                governor = 'conservative'
+            if power_cost is not None:
+                if usage > 75 and power_cost < 1/3:
+                    governor = 'performance'
+                elif usage < 25 and power_cost > 2/3:
+                    governor = 'powersave'
+                elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
+                    governor = 'conservative'
+                else:
+                    governor = 'ondemand'
             else:
-                governor = 'ondemand'
+                governor = 'ondemand'  # default governor when power cost is None
             
             if governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
