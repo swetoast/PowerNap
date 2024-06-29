@@ -14,6 +14,9 @@ import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
 
+def normalize_feature(value, min_value, max_value):
+    return (value - min_value) / (max_value - min_value)
+
 class GovernorManager:
     @staticmethod
     def set_cpu_governor(cpu, governor):
@@ -98,6 +101,17 @@ class ModelManager:
             return
         X = [[row[0], row[1]] for row in rows]
         y = [row[2] for row in rows]
+
+        # Compute the min and max for each feature
+        min_cpu_usage = min(x[0] for x in X)
+        max_cpu_usage = max(x[0] for x in X)
+        min_power_cost = min(x[1] for x in X)
+        max_power_cost = max(x[1] for x in X)
+
+        # Normalize the features
+        X = [[normalize_feature(x[0], min_cpu_usage, max_cpu_usage), 
+              normalize_feature(x[1], min_power_cost, max_power_cost)] for x in X]
+
         X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
         model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
@@ -111,6 +125,9 @@ class ModelManager:
             # Return 'performance' as the default governor
             return 'performance'
         else:
+            # Normalize the features
+            features = [[normalize_feature(features[0][0], min_cpu_usage, max_cpu_usage), 
+                         normalize_feature(features[0][1], min_power_cost, max_power_cost)]]
             return self.model.predict(features)[0]
 
 class CPUMonitor:
