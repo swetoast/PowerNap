@@ -152,25 +152,26 @@ def get_power_cost(self):
 
     return None  # Return None if no matching hour is found
 
-    def set_governor(self, cpu, usage, power_cost):
-        governors = GovernorManager.get_available_governors(cpu)
-        if governors:
-            if power_cost is not None:
-                if usage > 75 and power_cost < 1/3:
-                    governor = 'performance'
-                elif usage < 25 and power_cost > 2/3:
-                    governor = 'powersave'
-                elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
-                    governor = 'conservative'
-                else:
-                    governor = 'ondemand'
+def set_governor(self, cpu, usage, power_cost):
+    governors = GovernorManager.get_available_governors(cpu)
+    if governors:
+        if power_cost is not None:
+            if usage > 75 and power_cost < 1/3:
+                governor = 'performance'
+            elif usage < 25 and power_cost > 2/3:
+                governor = 'powersave'
+            elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
+                governor = 'conservative'
             else:
-                governor = 'ondemand'  # default governor when power cost is None
-            
-            if governor in governors:
-                GovernorManager.set_cpu_governor(cpu, governor)
-                self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
-                print(f"Governor for CPU{cpu} set to {governor}")
+                governor = 'ondemand'
+        else:
+            governor = 'ondemand'  # default governor when power cost is None
+
+        current_governor = GovernorManager.get_current_governor(cpu)
+        if governor != current_governor and governor in governors:
+            GovernorManager.set_cpu_governor(cpu, governor)
+            self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
+            print(f"Governor for CPU{cpu} set to {governor}")
 
     def monitor_cpu(self, cpu):
         while True:
