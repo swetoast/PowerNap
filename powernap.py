@@ -173,13 +173,18 @@ class CPUMonitor:
 
         # Check if the data is already fetched
         if self.power_cost_data is None or not self.is_data_available(current_time):
-            try:
-                response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
-                response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
-                self.power_cost_data = response.json()
-            except requests.exceptions.RequestException as e:
-                print(f"Error fetching power cost data: {e}")
-                return None
+            retry_count = 0
+            while True:
+                try:
+                    response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
+                    response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
+                    self.power_cost_data = response.json()
+                    break
+                except requests.exceptions.RequestException as e:
+                    retry_count += 1
+                    if retry_count <= 3:  # Only print the error message for the first 3 retries
+                        print("Site unavailable at the moment, retrying in 20 minutes...")
+                    time.sleep(1200)  # Wait for 5 minutes before retrying
 
         # Find the current hour's data
         for hour_data in self.power_cost_data:
