@@ -25,7 +25,7 @@ Welcome to PowerNap! This is a Python-based tool that keeps an eye on your CPU u
     ```
 4. Install the required Python packages.
     ```bash
-    pip install psutil cpufreq nordpool configparser scikit-learn
+    pip install -r requirements.txt
     ```
 
 ## Configuration
