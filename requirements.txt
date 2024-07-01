@@ -4,3 +4,4 @@ nordpool
 configparser
 scikit-learn
 SMOTE
+imblearn
