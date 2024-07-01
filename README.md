@@ -49,7 +49,7 @@ Description=PowerNap Service
 After=network.target
 
 [Service]
-ExecStart=/path/to/your/python/env/bin/python /path/to/your/script/powernap.py
+ExecStart=/path/to/your/python/env/bin/python -u /path/to/your/script/powernap.py
 Restart=always
 
 [Install]
