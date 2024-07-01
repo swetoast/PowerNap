@@ -3,3 +3,4 @@ cpufreq
 nordpool
 configparser
 scikit-learn
+SMOTE
