@@ -104,7 +104,8 @@ class ModelManager:
             self.model = None
 
     def train_model(self):
-        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data')
+        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data WHERE governor NOT IN (?, ?)', ('userspace', 'schedutil'))
+
         if rows is None:
             print("No training data available.")
             return
