@@ -9,6 +9,12 @@ import datetime
 import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
+from imblearn.over_sampling import SMOTE
+
+class Utils:
+    @staticmethod
+    def get_current_time():
+        return time.time()
 
 class GovernorManager:
     @staticmethod
@@ -81,7 +87,7 @@ class DatabaseManager:
             return None
 
     def purge_old_data(self, days):
-        cutoff_time = time.time() - days * 24 * 60 * 60
+        cutoff_time = Utils.get_current_time() - days * 24 * 60 * 60
         try:
             self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
             self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
@@ -89,7 +95,7 @@ class DatabaseManager:
             self.conn.commit()
         except sqlite3.Error as e:
             print(f"Failed to purge old data: {e}")
-            
+
 class ModelManager:
     def __init__(self, db_manager, model_file):
         self.db_manager = db_manager
@@ -105,7 +111,6 @@ class ModelManager:
 
     def train_model(self):
         rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data WHERE governor NOT IN (?, ?)', ('userspace', 'schedutil'))
-
         if rows is None:
             print("No training data available.")
             return
@@ -123,8 +128,10 @@ class ModelManager:
 
         try:
             X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
+            sm = SMOTE(random_state=42)
+            X_res, y_res = sm.fit_resample(X_train, y_train)
             model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
-            model.fit(X_train, y_train)
+            model.fit(X_res, y_res)
             y_pred = model.predict(X_test)
             print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
             dump(model, 'model.pkl')
@@ -155,7 +162,7 @@ class CPUMonitor:
 
     def get_cpu_usage(self):
         usage = psutil.cpu_percent(interval=1)
-        self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (time.time(), usage))
+        self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (Utils.get_current_time(), usage))
         return usage
 
     def get_power_cost(self):
@@ -179,7 +186,7 @@ class CPUMonitor:
             time_end = hour_data['time_end']
             if time_start <= current_time.isoformat() < time_end:
                 power_cost = hour_data['SEK_per_kWh']
-                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (time.time(), power_cost))
+                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (Utils.get_current_time(), power_cost))
                 
                 thresholds = {
                     'low': float(self.config['cost_thresholds']['low']),
@@ -226,12 +233,12 @@ class CPUMonitor:
             current_governor = GovernorManager.get_current_governor(cpu)
             if governor != current_governor and governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
-                self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (time.time(), cpu, governor))
+                self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (Utils.get_current_time(), cpu, governor))
                 print(f"Governor for CPU{cpu} set to {governor}")
 
     def monitor_cpu(self, cpu):
         while True:
-            start_time = time.time()
+            start_time = Utils.get_current_time()
             usage = self.get_cpu_usage()
             power_cost_category, power_cost = self.get_power_cost()
             self.set_governor(cpu, usage, power_cost)
