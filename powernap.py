@@ -216,7 +216,12 @@ class CPUMonitor:
                     governor = 'ondemand'
             else:
                 governor = 'ondemand'  # default governor when power cost is None
-            
+
+            # Exclude 'userspace' and 'schedutil'
+            if governor in ['userspace', 'schedutil']:
+                print(f"Governor {governor} is not allowed. Setting to 'ondemand'.")
+                governor = 'ondemand'
+
             current_governor = GovernorManager.get_current_governor(cpu)
             if governor != current_governor and governor in governors:
                 GovernorManager.set_cpu_governor(cpu, governor)
