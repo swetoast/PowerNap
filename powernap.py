@@ -114,6 +114,7 @@ class ModelManager:
         if rows is None:
             print("No training data available.")
             return
+        print(f"Number of training examples: {len(rows)}")
         X = [[row[0], row[1]] for row in rows]  # Include power_cost in the feature set
         y = [row[2] for row in rows]
 
