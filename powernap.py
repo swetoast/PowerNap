@@ -9,6 +9,7 @@ import datetime
 import psutil
 from joblib import load, dump
 from sklearn import ensemble, metrics, model_selection
+from sklearn.model_selection import GridSearchCV
 from imblearn.over_sampling import SMOTE
 
 class Utils:
@@ -131,8 +132,20 @@ class ModelManager:
             X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
             sm = SMOTE(random_state=42)
             X_res, y_res = sm.fit_resample(X_train, y_train)
-            model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
-            model.fit(X_res, y_res)
+            
+            param_grid = {
+                'n_estimators': [50, 100, 200],
+                'max_depth': [None, 10, 20, 30],
+                'criterion': ['gini', 'entropy']
+            }
+
+            grid_search = GridSearchCV(ensemble.RandomForestClassifier(random_state=42), param_grid, cv=5)
+            grid_search.fit(X_res, y_res)
+
+            print(f"Best parameters: {grid_search.best_params_}")
+            print(f"Best score: {grid_search.best_score_}")
+
+            model = grid_search.best_estimator_
             y_pred = model.predict(X_test)
             print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
             dump(model, 'model.pkl')
@@ -148,6 +161,11 @@ class ModelManager:
         else:
             return self.model.predict(features)[0]
 
+    def retrain_model(self):
+        while True:
+            self.model = self.train_model()
+            time.sleep(60 * 60 * 24)  # Retrain every 24 hours
+
 class CPUMonitor:
     def __init__(self, config_file):
         try:
@@ -157,6 +175,8 @@ class CPUMonitor:
             raise
         self.db_manager = DatabaseManager('monitor.db')
         self.power_cost_data = None
+        self.model_manager = ModelManager(self.db_manager, 'model.pkl')
+        threading.Thread(target=self.model_manager.retrain_model).start()
 
     def get_cpus(self):
         return list(range(os.cpu_count()))
