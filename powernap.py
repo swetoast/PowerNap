@@ -38,6 +38,9 @@ SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
 DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
 DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
 
+# Load max temperature from the configuration file
+MAX_TEMP = config.getfloat('MaxTemp', 'MAX_TEMP')
+
 # Get the CPU clock speeds
 cpu_freq = psutil.cpu_freq()
 LOW_CLOCK_SPEED = cpu_freq.min
@@ -208,20 +211,18 @@ class CPUMonitor:
         clock_speed = psutil.cpu_freq().current
         if power_cost is None:
             return 'powersave'
-        if usage > 75 and power_cost < LOW_COST and temp < max_temp:
+        if usage > 85 and power_cost < LOW_COST and temp < MAX_TEMP:
             return 'performance'
-        elif 50 <= usage <= 75 and power_cost < MID_COST and temp < max_temp:
+        elif 70 <= usage <= 85 and power_cost < MID_COST and temp < MAX_TEMP:
             return 'schedutil'
-        elif usage < 25 and power_cost > HIGH_COST and temp < max_temp:
+        elif usage < 30 and power_cost > HIGH_COST and temp < MAX_TEMP:
             return 'powersave'
-        elif 25 <= usage < 50 and power_cost < MID_COST and temp < max_temp:
+        elif 30 <= usage < 70 and power_cost < MID_COST and temp < MAX_TEMP:
             return 'conservative'
-        elif clock_speed > HIGH_CLOCK_SPEED and temp < max_temp:
+        elif clock_speed > HIGH_CLOCK_SPEED and temp < MAX_TEMP:
             return 'performance'
-        elif clock_speed < LOW_CLOCK_SPEED and temp > max_temp:
+        elif clock_speed < LOW_CLOCK_SPEED and temp > MAX_TEMP:
             return 'powersave'
-        else:
-            return 'ondemand'
 
 def set_cpu_governor(governor):
     governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
