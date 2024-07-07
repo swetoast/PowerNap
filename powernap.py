@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import time
 import psutil
+import glob
 from datetime import datetime
 from prettytable import PrettyTable
 import platform
@@ -43,7 +44,6 @@ class DatabaseManager:
         self.conn = self.create_connection(db_file)
 
     def create_connection(self, db_file):
-
         conn = None
         try:
             conn = sqlite3.connect(db_file)
@@ -68,7 +68,6 @@ class PriceManager(DatabaseManager):
         self.create_table()
 
     def create_table(self):
-
         query = """CREATE TABLE IF NOT EXISTS prices (
                         id INTEGER PRIMARY KEY,
                         SEK_per_kWh REAL NOT NULL,
@@ -78,7 +77,6 @@ class PriceManager(DatabaseManager):
         self.execute_query(query)
 
     def insert_data(self, data):
-
         query = ''' INSERT INTO prices(SEK_per_kWh,time_start,time_end)
                     VALUES(?,?,?) '''
         try:
@@ -88,7 +86,6 @@ class PriceManager(DatabaseManager):
             pass
 
     def read_and_present_data(self):
-
         query = "SELECT * FROM prices"
         rows = self.execute_query(query)
 
@@ -117,7 +114,6 @@ class CPUManager(DatabaseManager):
         self.create_table()
 
     def create_table(self):
-
         query = """CREATE TABLE IF NOT EXISTS cpu_usage (
                         id INTEGER PRIMARY KEY,
                         timestamp TEXT,
@@ -129,7 +125,6 @@ class CPUManager(DatabaseManager):
         self.execute_query(query)
 
     def insert_data(self, data):
-
         query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor,cpu_temp)
                     VALUES(?,?,?,?,?,?) '''
         return self.execute_query(query, data)
@@ -160,7 +155,6 @@ class CPUManager(DatabaseManager):
 class DataFetcher:
     @staticmethod
     def fetch_data_from_api(area, date_today):
-
         url = f'https://www.elprisetjustnu.se/api/v1/prices/{date_today}_{area}.json'
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
@@ -171,42 +165,46 @@ class DataFetcher:
 
 class CPUMonitor:
     @staticmethod
-    def get_cpu_usage():
-        """Get the current CPU usage as a percentage for each core."""
-        return psutil.cpu_percent(interval=1, percpu=True)
+    def get_cpu_temp():
+        temp_files = glob.glob('/sys/class/thermal/thermal_zone*/temp')
+        for temp_file in temp_files:
+            with open(temp_file, 'r') as file:
+                temp = int(file.read()) / 1000.0
+                return temp
+        print("Could not find temperature file.")
+        return None
 
     @staticmethod
-    def get_cpu_cores():
-
-        return psutil.cpu_count()
+    def get_cpu_governor():
+        governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
+        for governor_file in governor_files:
+            with open(governor_file, 'r') as file:
+                governor = file.read().strip()
+                return governor
+        print("Could not find governor file.")
+        return None
 
     @staticmethod
-    def get_cpu_info(core_id):
+    def get_cpu_info():
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_freq = psutil.cpu_freq().current
+        cpu_temp = CPUMonitor.get_cpu_temp()
+        cpu_governor = CPUMonitor.get_cpu_governor()
+        return cpu_percent, cpu_freq, cpu_temp, cpu_governor
 
-        governor_cmd = f"cat /sys/devices/system/cpu/cpu{core_id}/cpufreq/scaling_governor"
-        temp_cmd = f"cat /sys/class/thermal/thermal_zone0/temp"
-        try:
-            governor = os.popen(governor_cmd).read().strip()
-            if governor in ['userspace', 'schedutil']:
-                return None, None
-            temp = os.popen(temp_cmd).read().strip()
-            temp = float(temp) / 1000
-            return governor, temp
-        except Exception as e:
-            print(f"Error: {e}")
-            return None, None
 
     @staticmethod
     def choose_governor(usage, power_cost, temp):
         clock_speed = psutil.cpu_freq().current
         if power_cost is None:
             return 'powersave'
-
         if usage > 75 and power_cost < LOW_COST and temp < max_temp:
             return 'performance'
+        elif 50 <= usage <= 75 and power_cost < MID_COST and temp < max_temp:
+            return 'schedutil'
         elif usage < 25 and power_cost > HIGH_COST and temp < max_temp:
             return 'powersave'
-        elif 25 <= usage <= 75 and MID_COST <= power_cost <= HIGH_COST and temp < max_temp:
+        elif 25 <= usage < 50 and power_cost < MID_COST and temp < max_temp:
             return 'conservative'
         elif clock_speed > HIGH_CLOCK_SPEED and temp < max_temp:
             return 'performance'
@@ -235,9 +233,10 @@ def main():
     while True:
         area = AREA
         date_today = datetime.now().strftime('%Y/%m-%d')
+        current_hour = datetime.now().isoformat()
 
-        # Check if data for today already exists in the database
-        query = f"SELECT * FROM prices WHERE time_start LIKE '{date_today}%'"
+        # Check if data for the current hour already exists in the database
+        query = f"SELECT * FROM prices WHERE time_start <= '{current_hour}' AND time_end > '{current_hour}'"
         if not price_manager.execute_query(query):
             # If not, fetch data from API and insert into database
             data_prices = DataFetcher.fetch_data_from_api(area, date_today)
@@ -248,20 +247,13 @@ def main():
                     time_end = item['time_end']
                     data_item = (SEK_per_kWh, time_start, time_end)
                     price_manager.insert_data(data_item)
-            print("Price data inserted successfully.")
-        else:
-            print("Price data for today already exists.")
+                print("Price data inserted successfully.")
 
-        cpu_cores = CPUMonitor.get_cpu_cores()
-        cpu_usages = CPUMonitor.get_cpu_usage()
+        cpu_cores = psutil.cpu_count(logical=False)
         for i in range(cpu_cores):
-            cpu_governor, cpu_temp = CPUMonitor.get_cpu_info(i)
-            if cpu_governor is None and cpu_temp is None:
-                continue
+            cpu_percent, cpu_freq, cpu_temp, cpu_governor = CPUMonitor.get_cpu_info()
             timestamp = datetime.now().isoformat()
-            cpu_usage = cpu_usages[i]
-            cpu_governor = CPUMonitor.choose_governor(cpu_usage, current_price, cpu_temp)
-            data_cpu = (timestamp, cpu_cores, i, cpu_usage, cpu_governor, cpu_temp)
+            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor, cpu_temp)
             cpu_manager.insert_data(data_cpu)
         print("CPU data inserted successfully.")
         time.sleep(SLEEP_INTERVAL)
