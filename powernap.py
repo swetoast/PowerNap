@@ -192,7 +192,6 @@ class CPUMonitor:
         cpu_governor = CPUMonitor.get_cpu_governor()
         return cpu_percent, cpu_freq, cpu_temp, cpu_governor
 
-
     @staticmethod
     def choose_governor(usage, power_cost, temp):
         clock_speed = psutil.cpu_freq().current
@@ -212,6 +211,17 @@ class CPUMonitor:
             return 'powersave'
         else:
             return 'ondemand'
+
+def set_cpu_governor(governor):
+    governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
+    for governor_file in governor_files:
+        try:
+            with open(governor_file, 'w') as file:
+                file.write(governor)
+        except IOError as e:
+            print(f"Failed to set governor: {e}")
+            return False
+    return True
 
 def main():
     price_manager = PriceManager(DATABASE_PRICES)
@@ -256,6 +266,22 @@ def main():
             data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor, cpu_temp)
             cpu_manager.insert_data(data_cpu)
         print("CPU data inserted successfully.")
+        
+        # Get the current power cost
+        power_cost = price_manager.get_current_price()
+        
+        # Get the current CPU temperature
+        temp = CPUMonitor.get_cpu_temp()
+        
+        # Get the current CPU usage
+        usage = psutil.cpu_percent(interval=1)
+        
+        # Choose the governor based on the current state
+        governor = CPUMonitor.choose_governor(usage, power_cost, temp)
+        
+        # Set the chosen governor
+        set_cpu_governor(governor)
+        
         time.sleep(SLEEP_INTERVAL)
 
 if __name__ == "__main__":
