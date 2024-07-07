@@ -34,6 +34,10 @@ AREA = config.get('AreaCode', 'AREA')
 # Load sleep interval from the configuration file
 SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
 
+# Load data retention settings from the configuration file
+DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
+DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
+
 # Get the CPU clock speeds
 cpu_freq = psutil.cpu_freq()
 LOW_CLOCK_SPEED = cpu_freq.min
@@ -61,6 +65,13 @@ class DatabaseManager:
         else:
             cur.execute(query)
             return cur.fetchall()
+
+    def remove_old_data(self, days):
+        query = f"DELETE FROM prices WHERE time_start < datetime('now', '-{days} days')"
+        self.execute_query(query)
+        query = f"DELETE FROM cpu_usage WHERE timestamp < datetime('now', '-{days} days')"
+        self.execute_query(query)
+        print(f"Data older than {days} days removed.")
 
 class PriceManager(DatabaseManager):
     def __init__(self, db_file):
@@ -240,6 +251,8 @@ def main():
         cpu_manager.read_and_present_data()
         sys.exit()  # Exit the script
 
+    last_cleanup_date = datetime.now()
+
     while True:
         area = AREA
         date_today = datetime.now().strftime('%Y/%m-%d')
@@ -282,6 +295,15 @@ def main():
         # Set the chosen governor
         set_cpu_governor(governor)
         
+        # Check if it's time to remove old data
+        if DATA_RETENTION_ENABLED and (datetime.now() - last_cleanup_date).days >= DATA_RETENTION_DAYS:
+            # Remove old data
+            price_manager.remove_old_data(DATA_RETENTION_DAYS)
+            cpu_manager.remove_old_data(DATA_RETENTION_DAYS)
+
+            # Update the last cleanup date
+            last_cleanup_date = datetime.now()
+
         time.sleep(SLEEP_INTERVAL)
 
 if __name__ == "__main__":
