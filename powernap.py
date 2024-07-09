@@ -40,14 +40,6 @@ SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
 DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
 DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
 
-# Load max temperature from the configuration file
-MAX_TEMP = config.getfloat('MaxTemp', 'MAX_TEMP')
-
-# Get the CPU clock speeds
-cpu_freq = psutil.cpu_freq()
-LOW_CLOCK_SPEED = cpu_freq.min
-HIGH_CLOCK_SPEED = cpu_freq.max
-
 class DatabaseManager:
     def __init__(self, db_file):
         self.conn = self.create_connection(db_file)
@@ -137,9 +129,7 @@ class CPUManager(DatabaseManager):
                         cpu_cores INTEGER NOT NULL,
                         cpu_core_id INTEGER NOT NULL,
                         cpu_usage REAL NOT NULL,
-                        cpu_freq REAL NOT NULL,
-                        cpu_governor TEXT NOT NULL,
-                        cpu_temp REAL NOT NULL);"""
+                        cpu_governor TEXT NOT NULL);"""
         self.execute_query(query)
 
     def insert_data(self, data):
@@ -148,18 +138,16 @@ class CPUManager(DatabaseManager):
     def commit_data(self):
         cur = self.conn.cursor()
         for data in self.cpu_data:
-            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_freq,cpu_governor,cpu_temp)
-                        VALUES(?,?,?,?,?,?,?) '''
+            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor)
+                        VALUES(?,?,?,?,?) '''
             cur.execute(query, data)
         self.conn.commit()
         self.cpu_data.clear()
         print("CPU data inserted successfully.")
 
-    def get_median_usage_and_temp(self):
+    def get_median_usage(self):
         usage_data = [data[3] for data in self.cpu_data]
-        temp_data = [data[6] for data in self.cpu_data]
-        freq_data = [data[4] for data in self.cpu_data]
-        return median(usage_data), median(temp_data), median(freq_data)
+        return median(usage_data)
 
     def read_and_present_data(self):
         """ Query all rows in the cpu_usage table and present them in a nice way """
@@ -170,7 +158,7 @@ class CPUManager(DatabaseManager):
         table = PrettyTable()
 
         # Specify the Column Names while initializing the Table
-        table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Frequency", "CPU Governor", "CPU Temp"]
+        table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Governor"]
 
         # Add rows
         for row in rows:
@@ -197,14 +185,10 @@ class DataFetcher:
 
 class CPUMonitor:
     @staticmethod
-    def get_cpu_temp():
-        temp_files = glob.glob('/sys/class/thermal/thermal_zone*/temp')
-        for temp_file in temp_files:
-            with open(temp_file, 'r') as file:
-                temp = int(file.read()) / 1000.0
-                return temp
-        print("Could not find temperature file.")
-        return None
+    def get_cpu_info():
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_governor = CPUMonitor.get_cpu_governor()
+        return cpu_percent, cpu_governor
 
     @staticmethod
     def get_cpu_governor():
@@ -217,29 +201,18 @@ class CPUMonitor:
         return None
 
     @staticmethod
-    def get_cpu_info():
-        cpu_percent = psutil.cpu_percent(interval=1)
-        cpu_freq = psutil.cpu_freq().current
-        cpu_temp = CPUMonitor.get_cpu_temp()
-        cpu_governor = CPUMonitor.get_cpu_governor()
-        return cpu_percent, cpu_freq, cpu_temp, cpu_governor
-
-    @staticmethod
-    def choose_governor(usage, power_cost, temp):
-        clock_speed = psutil.cpu_freq().current
+    def choose_governor(usage, power_cost):
         if power_cost is None:
             return 'powersave'
-        if usage > 85 and power_cost < LOW_COST and temp < MAX_TEMP:
+        if usage > 85 and power_cost < LOW_COST:
             return 'performance'
-        elif 70 <= usage <= 85 and power_cost < MID_COST and temp < MAX_TEMP:
+        elif 70 <= usage <= 85 and power_cost < MID_COST:
             return 'schedutil'
-        elif usage < 30 and power_cost > HIGH_COST and temp < MAX_TEMP:
+        elif usage < 30 and power_cost > HIGH_COST:
             return 'powersave'
-        elif 30 <= usage < 70 and power_cost < MID_COST and temp < MAX_TEMP:
+        elif 30 <= usage < 70 and power_cost < MID_COST:
             return 'conservative'
-        elif clock_speed > HIGH_CLOCK_SPEED and temp < MAX_TEMP:
-            return 'performance'
-        elif clock_speed < LOW_CLOCK_SPEED and temp > MAX_TEMP:
+        else:
             return 'powersave'
 
 def set_cpu_governor(governor):
@@ -293,20 +266,20 @@ def main():
 
         cpu_cores = psutil.cpu_count(logical=False)
         for i in range(cpu_cores):
-            cpu_percent, cpu_freq, cpu_temp, cpu_governor = CPUMonitor.get_cpu_info()
+            cpu_percent, cpu_governor = CPUMonitor.get_cpu_info()
             timestamp = datetime.now().isoformat()
-            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_freq, cpu_governor, cpu_temp)
+            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor)
             cpu_manager.insert_data(data_cpu)
 
         # Commit data to the database every 15 minutes
         if (datetime.now().minute % 15) == 0:
             cpu_manager.commit_data()
 
-        # Get the median CPU usage, frequency and temperature
-        median_usage, median_temp, median_freq = cpu_manager.get_median_usage_and_temp()
+        # Get the median CPU usage
+        median_usage = cpu_manager.get_median_usage()
 
         # Choose the governor based on the median state
-        governor = CPUMonitor.choose_governor(median_usage, power_cost, median_temp)
+        governor = CPUMonitor.choose_governor(median_usage, power_cost)
 
         # Set the chosen governor
         set_cpu_governor(governor)
