@@ -137,6 +137,7 @@ class CPUManager(DatabaseManager):
                         cpu_cores INTEGER NOT NULL,
                         cpu_core_id INTEGER NOT NULL,
                         cpu_usage REAL NOT NULL,
+                        cpu_freq REAL NOT NULL,
                         cpu_governor TEXT NOT NULL,
                         cpu_temp REAL NOT NULL);"""
         self.execute_query(query)
@@ -147,8 +148,8 @@ class CPUManager(DatabaseManager):
     def commit_data(self):
         cur = self.conn.cursor()
         for data in self.cpu_data:
-            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor,cpu_temp)
-                        VALUES(?,?,?,?,?,?) '''
+            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_freq,cpu_governor,cpu_temp)
+                        VALUES(?,?,?,?,?,?,?) '''
             cur.execute(query, data)
         self.conn.commit()
         self.cpu_data.clear()
@@ -156,8 +157,9 @@ class CPUManager(DatabaseManager):
 
     def get_median_usage_and_temp(self):
         usage_data = [data[3] for data in self.cpu_data]
-        temp_data = [data[5] for data in self.cpu_data]
-        return median(usage_data), median(temp_data)
+        temp_data = [data[6] for data in self.cpu_data]
+        freq_data = [data[4] for data in self.cpu_data]
+        return median(usage_data), median(temp_data), median(freq_data)
 
     def read_and_present_data(self):
         """ Query all rows in the cpu_usage table and present them in a nice way """
@@ -168,7 +170,7 @@ class CPUManager(DatabaseManager):
         table = PrettyTable()
 
         # Specify the Column Names while initializing the Table
-        table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Governor", "CPU Temp"]
+        table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Frequency", "CPU Governor", "CPU Temp"]
 
         # Add rows
         for row in rows:
@@ -293,15 +295,15 @@ def main():
         for i in range(cpu_cores):
             cpu_percent, cpu_freq, cpu_temp, cpu_governor = CPUMonitor.get_cpu_info()
             timestamp = datetime.now().isoformat()
-            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor, cpu_temp)
+            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_freq, cpu_governor, cpu_temp)
             cpu_manager.insert_data(data_cpu)
 
         # Commit data to the database every 15 minutes
         if (datetime.now().minute % 15) == 0:
             cpu_manager.commit_data()
 
-        # Get the median CPU usage and temperature
-        median_usage, median_temp = cpu_manager.get_median_usage_and_temp()
+        # Get the median CPU usage, frequency and temperature
+        median_usage, median_temp, median_freq = cpu_manager.get_median_usage_and_temp()
 
         # Choose the governor based on the median state
         governor = CPUMonitor.choose_governor(median_usage, power_cost, median_temp)
