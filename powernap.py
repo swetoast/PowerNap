@@ -9,6 +9,8 @@ from datetime import datetime
 from prettytable import PrettyTable
 import platform
 import configparser
+from collections import deque
+from statistics import median
 
 # Load the configuration file
 config = configparser.ConfigParser()
@@ -126,6 +128,7 @@ class CPUManager(DatabaseManager):
     def __init__(self, db_file):
         super().__init__(db_file)
         self.create_table()
+        self.cpu_data = deque(maxlen=1000)  # Adjust maxlen as needed
 
     def create_table(self):
         query = """CREATE TABLE IF NOT EXISTS cpu_usage (
@@ -139,9 +142,22 @@ class CPUManager(DatabaseManager):
         self.execute_query(query)
 
     def insert_data(self, data):
-        query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor,cpu_temp)
-                    VALUES(?,?,?,?,?,?) '''
-        return self.execute_query(query, data)
+        self.cpu_data.append(data)
+
+    def commit_data(self):
+        cur = self.conn.cursor()
+        for data in self.cpu_data:
+            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor,cpu_temp)
+                        VALUES(?,?,?,?,?,?) '''
+            cur.execute(query, data)
+        self.conn.commit()
+        self.cpu_data.clear()
+        print("CPU data inserted successfully.")
+
+    def get_median_usage_and_temp(self):
+        usage_data = [data[3] for data in self.cpu_data]
+        temp_data = [data[5] for data in self.cpu_data]
+        return median(usage_data), median(temp_data)
 
     def read_and_present_data(self):
         """ Query all rows in the cpu_usage table and present them in a nice way """
@@ -279,23 +295,20 @@ def main():
             timestamp = datetime.now().isoformat()
             data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor, cpu_temp)
             cpu_manager.insert_data(data_cpu)
-        print("CPU data inserted successfully.")
-        
-        # Get the current power cost
-        power_cost = price_manager.get_current_price()
-        
-        # Get the current CPU temperature
-        temp = CPUMonitor.get_cpu_temp()
-        
-        # Get the current CPU usage
-        usage = psutil.cpu_percent(interval=1)
-        
-        # Choose the governor based on the current state
-        governor = CPUMonitor.choose_governor(usage, power_cost, temp)
-        
+
+        # Commit data to the database every 15 minutes
+        if (datetime.now().minute % 15) == 0:
+            cpu_manager.commit_data()
+
+        # Get the median CPU usage and temperature
+        median_usage, median_temp = cpu_manager.get_median_usage_and_temp()
+
+        # Choose the governor based on the median state
+        governor = CPUMonitor.choose_governor(median_usage, power_cost, median_temp)
+
         # Set the chosen governor
         set_cpu_governor(governor)
-        
+
         # Check if it's time to remove old data
         if DATA_RETENTION_ENABLED and (datetime.now() - last_cleanup_date).days >= DATA_RETENTION_DAYS:
             # Remove old data
