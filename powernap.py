@@ -147,8 +147,12 @@ class CPUManager(DatabaseManager):
         print("CPU data inserted successfully.")
 
     def get_median_usage(self):
-        usage_data = [data[3] for data in self.cpu_data]
-        return median(usage_data)
+        if self.cpu_data:  # Check if cpu_data is not empty
+            usage_data = [data[3] for data in self.cpu_data]
+            return median(usage_data)
+        else:
+            print("No CPU usage data available.")
+            return None
 
     def read_and_present_data(self):
         """ Query all rows in the cpu_usage table and present them in a nice way """
