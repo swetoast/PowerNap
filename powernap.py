@@ -1,272 +1,301 @@
 import os
-import configparser
-import sqlite3
-import threading
-import time
-from queue import Queue
 import requests
-import datetime
+import sqlite3
+import sys
+import time
 import psutil
-from joblib import load, dump
-from sklearn import ensemble, metrics, model_selection
-from imblearn.over_sampling import SMOTE
+import glob
+from datetime import datetime
+from prettytable import PrettyTable
+import platform
+import configparser
+from collections import deque
+from statistics import median
 
-class Utils:
-    @staticmethod
-    def get_current_time():
-        return time.time()
+# Load the configuration file
+config = configparser.ConfigParser()
 
-class GovernorManager:
-    @staticmethod
-    def set_cpu_governor(cpu, governor):
-        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'w') as f:
-            f.write(governor)
+# Get the directory of the current script
+script_dir = os.path.dirname(os.path.realpath(__file__))
 
-    @staticmethod
-    def get_available_governors(cpu):
-        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_available_governors', 'r') as f:
-            return [g for g in f.read().strip().split(' ') if g not in ['userspace', 'schedutil']]
+# Read the configuration file
+config.read(os.path.join(script_dir, 'powernap.conf'))
 
-    @staticmethod
-    def get_current_governor(cpu):
-        with open(f'/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_governor', 'r') as f:
-            return f.read().strip()
+# Define the paths to the databases
+DATABASE_PRICES = os.path.join(script_dir, "prices.db")
+DATABASE_CPU = os.path.join(script_dir, "cpu.db")
 
-class ConfigLoader:
-    @staticmethod
-    def load_config(config_file):
-        config = configparser.ConfigParser()
-        try:
-            config.read(os.path.join(os.path.dirname(os.path.realpath(__file__)), config_file))
-        except configparser.Error as e:
-            print(f"Failed to load config file: {e}")
-            raise
-        return config
+# Load cost constants from the configuration file
+HIGH_COST = config.getfloat('CostConstants', 'HIGH_COST')
+MID_COST = config.getfloat('CostConstants', 'MID_COST')
+LOW_COST = config.getfloat('CostConstants', 'LOW_COST')
+
+# Load area code from the configuration file
+AREA = config.get('AreaCode', 'AREA')
+
+# Load sleep interval from the configuration file
+SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
+
+# Load data retention settings from the configuration file
+DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
+DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
 
 class DatabaseManager:
-    def __init__(self, db_name):
-        # Create the full path to the monitor.db file
-        db_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), db_name)
+    def __init__(self, db_file):
+        self.conn = self.create_connection(db_file)
 
+    def create_connection(self, db_file):
+        conn = None
         try:
-            self.conn = sqlite3.connect(db_path, check_same_thread=False)
-            self.setup_database()
-            self.queue = Queue()
-            threading.Thread(target=self._process_queue).start()
+            conn = sqlite3.connect(db_file)
         except sqlite3.Error as e:
-            print(f"Failed to connect to the database: {e}")
-            raise
+            print(e)
+        return conn
 
-    def setup_database(self):
-        c = self.conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS cpu_usage (time REAL PRIMARY KEY, usage REAL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS power_cost (time REAL PRIMARY KEY, cost REAL)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS governor_changes (time REAL, cpu INTEGER, governor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS available_governors (cpu INTEGER, governor TEXT)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS training_data (cpu_usage REAL, governor TEXT)''') 
-
-    def _process_queue(self):
-        while True:
-            sql, params = self.queue.get()
-            try:
-                self.conn.execute(sql, params)
-                self.conn.commit()
-            except sqlite3.Error as e:
-                print(f"Failed to execute SQL command: {e}")
-            finally:
-                self.queue.task_done()
-
-    def insert_into_db(self, sql, params=()):
-        self.queue.put((sql, params))
-
-    def fetch_data_from_db(self, sql, params=()):
-        try:
-            return self.conn.execute(sql, params).fetchone()
-        except sqlite3.Error as e:
-            print(f"Failed to fetch data from database: {e}")
-            return None
-
-    def purge_old_data(self, days):
-        cutoff_time = Utils.get_current_time() - days * 24 * 60 * 60
-        try:
-            self.conn.execute("DELETE FROM cpu_usage WHERE time < ?", (cutoff_time,))
-            self.conn.execute("DELETE FROM governor_changes WHERE time < ?", (cutoff_time,))
-            self.conn.execute("DELETE FROM power_cost WHERE time < ?", (cutoff_time,))
+    def execute_query(self, query, data=None):
+        """ Execute a query """
+        cur = self.conn.cursor()
+        if data:
+            cur.execute(query, data)
             self.conn.commit()
-        except sqlite3.Error as e:
-            print(f"Failed to purge old data: {e}")
-
-class ModelManager:
-    def __init__(self, db_manager, model_file):
-        self.db_manager = db_manager
-
-        # Create the full path to the model.pkl file
-        model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), model_file)
-
-        try:
-            self.model = load(model_path) if os.path.exists(model_path) else self.train_model()
-        except Exception as e:
-            print(f"Failed to load or train the model: {e}")
-            self.model = None
-
-    def train_model(self):
-        rows = self.db_manager.fetch_data_from_db('SELECT cpu_usage, power_cost, governor FROM training_data WHERE governor NOT IN (?, ?)', ('userspace', 'schedutil'))
-        if rows is None:
-            print("No training data available.")
-            return
-        print(f"Number of training examples: {len(rows)}")
-        X = [[row[0], row[1]] for row in rows]  # Include power_cost in the feature set
-        y = [row[2] for row in rows]
-
-        # Compute the min and max for each feature
-        min_cpu_usage = min(x[0] for x in X)
-        max_cpu_usage = max(x[0] for x in X)
-        min_power_cost = min(x[1] for x in X)
-        max_power_cost = max(x[1] for x in X)
-
-        # Normalize the features
-        X = [[(x[0] - min_cpu_usage) / (max_cpu_usage - min_cpu_usage), (x[1] - min_power_cost) / (max_power_cost - min_power_cost)] for x in X]
-
-        try:
-            X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y, test_size=0.2, random_state=42)
-            sm = SMOTE(random_state=42)
-            X_res, y_res = sm.fit_resample(X_train, y_train)
-            model = ensemble.RandomForestClassifier(n_estimators=100, random_state=42)
-            model.fit(X_res, y_res)
-            y_pred = model.predict(X_test)
-            print(f"Model accuracy: {metrics.accuracy_score(y_test, y_pred)}")
-            dump(model, 'model.pkl')
-            return model
-        except Exception as e:
-            print(f"Failed to train the model: {e}")
-            return None
-
-    def predict_governor(self, features):
-        if self.model is None:
-            print("Model is not available. Returning default governor 'performance'.")
-            return 'performance'
+            return cur.lastrowid
         else:
-            return self.model.predict(features)[0]
+            cur.execute(query)
+            return cur.fetchall()
+
+    def remove_old_data(self, days):
+        query = f"DELETE FROM prices WHERE time_start < datetime('now', '-{days} days')"
+        self.execute_query(query)
+        query = f"DELETE FROM cpu_usage WHERE timestamp < datetime('now', '-{days} days')"
+        self.execute_query(query)
+        print(f"Data older than {days} days removed.")
+
+class PriceManager(DatabaseManager):
+    def __init__(self, db_file):
+        super().__init__(db_file)
+        self.create_table()
+
+    def create_table(self):
+        query = """CREATE TABLE IF NOT EXISTS prices (
+                        id INTEGER PRIMARY KEY,
+                        SEK_per_kWh REAL NOT NULL,
+                        time_start TEXT NOT NULL,
+                        time_end TEXT NOT NULL,
+                        UNIQUE(SEK_per_kWh, time_start, time_end));"""
+        self.execute_query(query)
+
+    def insert_data(self, data):
+        query = ''' INSERT INTO prices(SEK_per_kWh,time_start,time_end)
+                    VALUES(?,?,?) '''
+        try:
+            return self.execute_query(query, data)
+        except sqlite3.IntegrityError:
+            # Ignore the exception and continue
+            pass
+
+    def read_and_present_data(self):
+        query = "SELECT * FROM prices"
+        rows = self.execute_query(query)
+
+        # Create a PrettyTable instance
+        table = PrettyTable()
+
+        # Specify the Column Names while initializing the Table
+        table.field_names = ["ID", "SEK_per_kWh", "Time Start", "Time End"]
+
+        # Add rows
+        for row in rows:
+            table.add_row(row)
+
+        # Print the table
+        print(table)
+
+    def get_current_price(self):
+        current_hour = datetime.now().isoformat()
+        query = f"SELECT SEK_per_kWh FROM prices WHERE time_start <= '{current_hour}' AND time_end > '{current_hour}' ORDER BY id DESC LIMIT 1"
+        rows = self.execute_query(query)
+        #print(f"Debug: query = {query}, result = {rows}")  # Debug print
+        return rows[0][0] if rows else None
+
+class CPUManager(DatabaseManager):
+    def __init__(self, db_file):
+        super().__init__(db_file)
+        self.create_table()
+        self.cpu_data = deque(maxlen=1000)  # Adjust maxlen as needed
+
+    def create_table(self):
+        query = """CREATE TABLE IF NOT EXISTS cpu_usage (
+                        id INTEGER PRIMARY KEY,
+                        timestamp TEXT,
+                        cpu_cores INTEGER NOT NULL,
+                        cpu_core_id INTEGER NOT NULL,
+                        cpu_usage REAL NOT NULL,
+                        cpu_governor TEXT NOT NULL);"""
+        self.execute_query(query)
+
+    def insert_data(self, data):
+        self.cpu_data.append(data)
+
+    def commit_data(self):
+        cur = self.conn.cursor()
+        for data in self.cpu_data:
+            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor)
+                        VALUES(?,?,?,?,?) '''
+            cur.execute(query, data)
+        self.conn.commit()
+        self.cpu_data.clear()
+        print("CPU data inserted successfully.")
+
+    def get_median_usage(self):
+        usage_data = [data[3] for data in self.cpu_data]
+        return median(usage_data)
+
+    def read_and_present_data(self):
+        """ Query all rows in the cpu_usage table and present them in a nice way """
+        query = "SELECT * FROM cpu_usage"
+        rows = self.execute_query(query)
+
+        # Create a PrettyTable instance
+        table = PrettyTable()
+
+        # Specify the Column Names while initializing the Table
+        table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Governor"]
+
+        # Add rows
+        for row in rows:
+            table.add_row(row)
+
+        # Print the table
+        print(table)
+
+    def get_current_governor(self):
+        query = "SELECT cpu_governor FROM cpu_usage ORDER BY id DESC LIMIT 1"
+        rows = self.execute_query(query)
+        return rows[0][0] if rows else None
+
+class DataFetcher:
+    @staticmethod
+    def fetch_data_from_api(area, date_today):
+        url = f'https://www.elprisetjustnu.se/api/v1/prices/{date_today}_{area}.json'
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Failed to retrieve data. Status code: {response.status_code}")
+            return None
 
 class CPUMonitor:
-    def __init__(self, config_file):
+    @staticmethod
+    def get_cpu_info():
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_governor = CPUMonitor.get_cpu_governor()
+        return cpu_percent, cpu_governor
+
+    @staticmethod
+    def get_cpu_governor():
+        governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
+        for governor_file in governor_files:
+            with open(governor_file, 'r') as file:
+                governor = file.read().strip()
+                return governor
+        print("Could not find governor file.")
+        return None
+
+    @staticmethod
+    def choose_governor(usage, power_cost):
+        if power_cost is None:
+            return 'powersave'
+        if usage > 85 and power_cost < LOW_COST:
+            return 'performance'
+        elif 70 <= usage <= 85 and power_cost < MID_COST:
+            return 'schedutil'
+        elif usage < 30 and power_cost > HIGH_COST:
+            return 'powersave'
+        elif 30 <= usage < 70 and power_cost < MID_COST:
+            return 'conservative'
+        else:
+            return 'powersave'
+
+def set_cpu_governor(governor):
+    governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
+    for governor_file in governor_files:
         try:
-            self.config = ConfigLoader.load_config(config_file)
-        except configparser.Error as e:
-            print(f"Failed to load config file: {e}")
-            raise
-        self.db_manager = DatabaseManager('monitor.db')
-        self.power_cost_data = None
+            with open(governor_file, 'w') as file:
+                file.write(governor)
+        except IOError as e:
+            print(f"Failed to set governor: {e}")
+            return False
+    return True
 
-    def get_cpus(self):
-        return list(range(os.cpu_count()))
+def main():
+    price_manager = PriceManager(DATABASE_PRICES)
+    cpu_manager = CPUManager(DATABASE_CPU)
 
-    def get_cpu_usage(self):
-        usage = psutil.cpu_percent(interval=1)
-        self.db_manager.insert_into_db("INSERT INTO cpu_usage VALUES (?, ?)", (Utils.get_current_time(), usage))
-        return usage
+    current_price = price_manager.get_current_price()
+    current_governor = cpu_manager.get_current_governor()
 
-    def get_power_cost(self):
-        current_time = datetime.datetime.now()
-        formatted_time = current_time.strftime('%Y/%m-%d')  # Format the date as YYYY/MM-DD
-        area = self.config['general']['area']  # Read the area from the config file
+    print(f"Current price: {current_price}")
+    print(f"Current governor: {current_governor}")
 
-        # Check if the data is already fetched
-        if self.power_cost_data is None or not self.is_data_available(current_time):
-            retry_count = 0
-            while True:
-                try:
-                    response = requests.get(f'https://www.elprisetjustnu.se/api/v1/prices/{formatted_time}_{area}.json', timeout=10)
-                    response.raise_for_status()  # Raises a HTTPError if the response status is 4xx, 5xx
-                    self.power_cost_data = response.json()
-                    break
-                except requests.exceptions.RequestException as e:
-                    retry_count += 1
-                    if retry_count <= 3:  # Only print the error message for the first 3 retries
-                        print("Site unavailable at the moment, retrying in 20 minutes...")
-                    time.sleep(1200)  # Wait for 5 minutes before retrying
+    if '-debug' in sys.argv:
+        print("Price data:")
+        price_manager.read_and_present_data()
+        print("\nCPU data:")
+        cpu_manager.read_and_present_data()
+        sys.exit()  # Exit the script
 
-        # Find the current hour's data
-        for hour_data in self.power_cost_data:
-            time_start = hour_data['time_start']
-            time_end = hour_data['time_end']
-            if time_start <= current_time.isoformat() < time_end:
-                power_cost = hour_data['SEK_per_kWh']
-                self.db_manager.insert_into_db("INSERT INTO power_cost VALUES (?, ?)", (Utils.get_current_time(), power_cost))
-                
-                thresholds = {
-                    'low': float(self.config['cost_thresholds']['low']),
-                    'mid': float(self.config['cost_thresholds']['mid']),
-                    'high': float(self.config['cost_thresholds']['high'])
-                }
+    last_cleanup_date = datetime.now()
 
-                for category, threshold in thresholds.items():
-                    if power_cost is not None and power_cost <= threshold:
-                        return category, power_cost
+    while True:
+        area = AREA
+        date_today = datetime.now().strftime('%Y/%m-%d')
+        current_hour = datetime.now().isoformat()
 
-                return 'high', power_cost
+        # Check if data for the current hour already exists in the database
+        query = f"SELECT * FROM prices WHERE time_start <= '{current_hour}' AND time_end > '{current_hour}'"
+        if not price_manager.execute_query(query):
+            # If not, fetch data from API and insert into database
+            data_prices = DataFetcher.fetch_data_from_api(area, date_today)
+            if data_prices is not None:
+                for item in data_prices:
+                    SEK_per_kWh = item['SEK_per_kWh']
+                    time_start = item['time_start']
+                    time_end = item['time_end']
+                    data_item = (SEK_per_kWh, time_start, time_end)
+                    price_manager.insert_data(data_item)
+                print("Price data inserted successfully.")
 
-        return None  # Return None if no matching hour is found
+        cpu_cores = psutil.cpu_count(logical=False)
+        for i in range(cpu_cores):
+            cpu_percent, cpu_governor = CPUMonitor.get_cpu_info()
+            timestamp = datetime.now().isoformat()
+            data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor)
+            cpu_manager.insert_data(data_cpu)
 
-    def is_data_available(self, current_time):
-        for hour_data in self.power_cost_data:
-            time_start = hour_data['time_start']
-            time_end = hour_data['time_end']
-            if time_start <= current_time.isoformat() < time_end:
-                return True
-        return False
+        # Commit data to the database every 15 minutes
+        if (datetime.now().minute % 15) == 0:
+            cpu_manager.commit_data()
 
-    def set_governor(self, cpu, usage, power_cost):
-        governors = GovernorManager.get_available_governors(cpu)
-        if governors:
-            if power_cost is not None:
-                if usage > 75 and power_cost < 1/3:
-                    governor = 'performance'
-                elif usage < 25 and power_cost > 2/3:
-                    governor = 'powersave'
-                elif 25 <= usage <= 75 and 1/3 <= power_cost <= 2/3:
-                    governor = 'conservative'
-                else:
-                    governor = 'ondemand'
-            else:
-                governor = 'ondemand'  # default governor when power cost is None
+        # Get the median CPU usage
+        median_usage = cpu_manager.get_median_usage()
 
-            # Exclude 'userspace' and 'schedutil'
-            if governor in ['userspace', 'schedutil']:
-                print(f"Governor {governor} is not allowed. Setting to 'ondemand'.")
-                governor = 'ondemand'
+        # Choose the governor based on the median state
+        power_cost = current_price  # Define power_cost as current_price
+        governor = CPUMonitor.choose_governor(median_usage, power_cost)
 
-            current_governor = GovernorManager.get_current_governor(cpu)
-            if governor != current_governor and governor in governors:
-                GovernorManager.set_cpu_governor(cpu, governor)
-                self.db_manager.insert_into_db("INSERT INTO governor_changes VALUES (?, ?, ?)", (Utils.get_current_time(), cpu, governor))
-                print(f"Governor for CPU{cpu} set to {governor}")
+        # Set the chosen governor
+        set_cpu_governor(governor)
 
-    def monitor_cpu(self, cpu):
-        while True:
-            start_time = Utils.get_current_time()
-            usage = self.get_cpu_usage()
-            power_cost_category, power_cost = self.get_power_cost()
-            self.set_governor(cpu, usage, power_cost)
-            time.sleep(int(self.config['general']['sleep_time']))  # Convert sleep_time to int
+        # Check if it's time to remove old data
+        if DATA_RETENTION_ENABLED and (datetime.now() - last_cleanup_date).days >= DATA_RETENTION_DAYS:
+            # Remove old data
+            price_manager.remove_old_data(DATA_RETENTION_DAYS)
+            cpu_manager.remove_old_data(DATA_RETENTION_DAYS)
 
-    def monitor(self):
-        cpus = self.get_cpus()
-        print(f"Number of CPUs: {len(cpus)}")
-        for cpu in cpus:
-            print(f"CPU{cpu} initial governor: {GovernorManager.get_current_governor(cpu)}")
-        initial_cpu_usage = self.get_cpu_usage()
-        print(f"Initial CPU usage: {initial_cpu_usage}%")
-        initial_power_cost_category, initial_power_cost = self.get_power_cost()
-        print(f"Initial power cost: {initial_power_cost} ({initial_power_cost_category})")
+            # Update the last cleanup date
+            last_cleanup_date = datetime.now()
 
-        purge_enabled = self.config['database']['purge_enabled'].lower() == 'yes'
-        if purge_enabled:
-            purge_after_days = int(self.config['database']['purge_after_days'])
-            self.db_manager.purge_old_data(purge_after_days)
-        for cpu in cpus:
-            threading.Thread(target=self.monitor_cpu, args=(cpu,)).start()
+        time.sleep(SLEEP_INTERVAL)
 
 if __name__ == "__main__":
-    monitor = CPUMonitor(config_file='powernap.conf')
-    monitor.monitor()
+    main()
