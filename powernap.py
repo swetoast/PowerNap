@@ -280,6 +280,7 @@ def main():
         median_usage = cpu_manager.get_median_usage()
 
         # Choose the governor based on the median state
+        power_cost = current_price  # Define power_cost as current_price
         governor = CPUMonitor.choose_governor(median_usage, power_cost)
 
         # Set the chosen governor
