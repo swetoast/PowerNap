@@ -121,7 +121,7 @@ class CPUManager(DatabaseManager):
     def __init__(self, db_file):
         super().__init__(db_file)
         self.create_table()
-        self.cpu_data = deque(maxlen=1000)  # Adjust maxlen as needed
+        self.cpu_data = {i: deque(maxlen=900) for i in range(psutil.cpu_count(logical=False))}  # Adjust maxlen as needed
 
     def create_table(self):
         query = """CREATE TABLE IF NOT EXISTS cpu_usage (
@@ -134,25 +134,23 @@ class CPUManager(DatabaseManager):
         self.execute_query(query)
 
     def insert_data(self, data):
-        self.cpu_data.append(data)
+        self.cpu_data[data[2]].append(data)
 
     def commit_data(self):
         cur = self.conn.cursor()
-        for data in self.cpu_data:
-            query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor)
-                        VALUES(?,?,?,?,?) '''
-            cur.execute(query, data)
+        for cpu_core_id, cpu_data_deque in self.cpu_data.items():
+            if cpu_data_deque:
+                median_usage = median([data[3] for data in cpu_data_deque])
+                timestamp = datetime.now().isoformat()
+                cpu_cores = psutil.cpu_count(logical=False)
+                cpu_governor = CPUMonitor.get_cpu_governor()
+                data_cpu = (timestamp, cpu_cores, cpu_core_id, median_usage, cpu_governor)
+                query = ''' INSERT INTO cpu_usage(timestamp, cpu_cores,cpu_core_id,cpu_usage,cpu_governor)
+                            VALUES(?,?,?,?,?) '''
+                cur.execute(query, data_cpu)
         self.conn.commit()
-        self.cpu_data.clear()
+        self.cpu_data = {i: deque(maxlen=900) for i in range(psutil.cpu_count(logical=False))}  # Clear the data
         print("CPU data inserted successfully.")
-
-    def get_median_usage(self):
-        if self.cpu_data:  # Check if cpu_data is not empty
-            usage_data = [data[3] for data in self.cpu_data]
-            return median(usage_data)
-        else:
-            print("No CPU usage data available.")
-            return None
 
     def read_and_present_data(self):
         """ Query all rows in the cpu_usage table and present them in a nice way """
@@ -176,6 +174,14 @@ class CPUManager(DatabaseManager):
         query = "SELECT cpu_governor FROM cpu_usage ORDER BY id DESC LIMIT 1"
         rows = self.execute_query(query)
         return rows[0][0] if rows else None
+
+    def get_median_usage(self, cpu_core_id):
+        if self.cpu_data[cpu_core_id]:  # Check if cpu_data is not empty
+            usage_data = [data[3] for data in self.cpu_data[cpu_core_id]]
+            return median(usage_data)
+        else:
+            print(f"No CPU usage data available for core {cpu_core_id}.")
+            return None
 
 class DataFetcher:
     @staticmethod
@@ -276,19 +282,19 @@ def main():
             data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor)
             cpu_manager.insert_data(data_cpu)
 
+            # Get the median CPU usage
+            median_usage = cpu_manager.get_median_usage(i)
+
+            # Choose the governor based on the median state
+            power_cost = current_price  # Define power_cost as current_price
+            governor = CPUMonitor.choose_governor(median_usage, power_cost)
+
+            # Set the chosen governor
+            set_cpu_governor(governor)
+
         # Commit data to the database every 15 minutes
         if (datetime.now().minute % 15) == 0:
             cpu_manager.commit_data()
-
-        # Get the median CPU usage
-        median_usage = cpu_manager.get_median_usage()
-
-        # Choose the governor based on the median state
-        power_cost = current_price  # Define power_cost as current_price
-        governor = CPUMonitor.choose_governor(median_usage, power_cost)
-
-        # Set the chosen governor
-        set_cpu_governor(governor)
 
         # Check if it's time to remove old data
         if DATA_RETENTION_ENABLED and (datetime.now() - last_cleanup_date).days >= DATA_RETENTION_DAYS:
