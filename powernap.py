@@ -114,7 +114,7 @@ class PriceManager(DatabaseManager):
         current_hour = datetime.now().isoformat()
         query = f"SELECT SEK_per_kWh FROM prices WHERE time_start <= '{current_hour}' AND time_end > '{current_hour}' ORDER BY id DESC LIMIT 1"
         rows = self.execute_query(query)
-        print(f"Debug: query = {query}, result = {rows}")  # Debug print
+        #print(f"Debug: query = {query}, result = {rows}")  # Debug print
         return rows[0][0] if rows else None
 
 class CPUManager(DatabaseManager):
