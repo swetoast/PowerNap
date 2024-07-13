@@ -40,6 +40,9 @@ SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
 DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
 DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
 
+# Load commit interval from the configuration file
+COMMIT_INTERVAL = config.getint('CommitInterval', 'INTERVAL')
+
 class DatabaseManager:
     def __init__(self, db_file):
         self.conn = self.create_connection(db_file)
@@ -292,8 +295,8 @@ def main():
             # Set the chosen governor
             set_cpu_governor(governor)
 
-        # Commit data to the database every 15 minutes
-        if (datetime.now().minute % 15) == 0:
+        # Commit data to the database every COMMIT_INTERVAL minutes
+        if (datetime.now().minute % COMMIT_INTERVAL) == 0:
             cpu_manager.commit_data()
 
         # Check if it's time to remove old data
