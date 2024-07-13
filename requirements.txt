@@ -1,7 +1,3 @@
-psutil
-cpufreq
-nordpool
-configparser
-scikit-learn
-SMOTE
-imblearn
+requests 
+psutil 
+prettytable
