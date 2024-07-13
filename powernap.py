@@ -10,7 +10,7 @@ from prettytable import PrettyTable
 import platform
 import configparser
 from collections import deque
-from statistics import median
+from statistics import mean, median  # Import mean and median
 
 # Load the configuration file
 config = configparser.ConfigParser()
@@ -42,6 +42,9 @@ DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
 
 # Load commit interval from the configuration file
 COMMIT_INTERVAL = config.getint('CommitInterval', 'INTERVAL')
+
+# Load usage calculation method from the configuration file
+USAGE_CALCULATION_METHOD = config.get('UsageCalculation', 'METHOD').split('#')[0].strip()
 
 class DatabaseManager:
     def __init__(self, db_file):
@@ -178,10 +181,18 @@ class CPUManager(DatabaseManager):
         rows = self.execute_query(query)
         return rows[0][0] if rows else None
 
-    def get_median_usage(self, cpu_core_id):
+    def get_usage(self, cpu_core_id, method):
+        """Get the CPU usage for a specific core, calculated using the specified method."""
         if self.cpu_data[cpu_core_id]:  # Check if cpu_data is not empty
             usage_data = [data[3] for data in self.cpu_data[cpu_core_id]]
-            return median(usage_data)
+
+            if method == 'average':
+                return mean(usage_data)
+            elif method == 'median':
+                return median(usage_data)
+            else:
+                print(f"Unknown method: {method}. Please choose 'average' or 'median'.")
+                return None
         else:
             print(f"No CPU usage data available for core {cpu_core_id}.")
             return None
@@ -241,6 +252,7 @@ def set_cpu_governor(governor):
     return True
 
 def main():
+
     price_manager = PriceManager(DATABASE_PRICES)
     cpu_manager = CPUManager(DATABASE_CPU)
 
@@ -285,12 +297,15 @@ def main():
             data_cpu = (timestamp, cpu_cores, i, cpu_percent, cpu_governor)
             cpu_manager.insert_data(data_cpu)
 
-            # Get the median CPU usage
-            median_usage = cpu_manager.get_median_usage(i)
+            # Get the CPU usage
+            usage = cpu_manager.get_usage(i, USAGE_CALCULATION_METHOD)
+            if usage is None:  # Add this check
+                print(f"Error: Could not get CPU usage. Please check your configuration.")
+                continue
 
-            # Choose the governor based on the median state
+            # Choose the governor based on the usage
             power_cost = current_price  # Define power_cost as current_price
-            governor = CPUMonitor.choose_governor(median_usage, power_cost)
+            governor = CPUMonitor.choose_governor(usage, power_cost)
 
             # Set the chosen governor
             set_cpu_governor(governor)
