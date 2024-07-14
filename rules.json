@@ -6,28 +6,40 @@
             "governor": "powersave"
         },
         {
-            "usage": ">85",
-            "power_cost": "<LOW_COST",
+            "usage_value": 85,
+            "usage_comparison": "higher_than",
+            "power_cost_value": "LOW_COST",
+            "power_cost_comparison": "lower_than",
             "governor": "performance"
         },
         {
-            "usage": "70-85",
-            "power_cost": "<MID_COST",
+            "usage_value": 70,
+            "usage_value2": 85,
+            "usage_comparison": "between",
+            "power_cost_value": "MID_COST",
+            "power_cost_comparison": "lower_than",
             "governor": "schedutil"
         },
         {
-            "usage": "<30",
-            "power_cost": ">HIGH_COST",
+            "usage_value": 30,
+            "usage_comparison": "lower_than",
+            "power_cost_value": "HIGH_COST",
+            "power_cost_comparison": "higher_than",
             "governor": "powersave"
         },
         {
-            "usage": "30-70",
-            "power_cost": "<MID_COST",
+            "usage_value": 30,
+            "usage_value2": 70,
+            "usage_comparison": "between",
+            "power_cost_value": "MID_COST",
+            "power_cost_comparison": "lower_than",
             "governor": "conservative"
         },
         {
-            "usage": "default",
-            "power_cost": "default",
+            "usage_value": null,
+            "usage_comparison": "default",
+            "power_cost_value": null,
+            "power_cost_comparison": "default",
             "governor": "powersave"
         }
     ]
