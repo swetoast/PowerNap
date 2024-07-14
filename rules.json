@@ -1,11 +1,6 @@
 {
     "rules": [
         {
-            "usage": "None",
-            "power_cost": "None",
-            "governor": "powersave"
-        },
-        {
             "usage_value": 85,
             "usage_comparison": "higher_than",
             "power_cost_value": "LOW_COST",
