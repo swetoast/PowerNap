@@ -1,0 +1,34 @@
+{
+    "rules": [
+        {
+            "usage": "None",
+            "power_cost": "None",
+            "governor": "powersave"
+        },
+        {
+            "usage": ">85",
+            "power_cost": "<LOW_COST",
+            "governor": "performance"
+        },
+        {
+            "usage": "70-85",
+            "power_cost": "<MID_COST",
+            "governor": "schedutil"
+        },
+        {
+            "usage": "<30",
+            "power_cost": ">HIGH_COST",
+            "governor": "powersave"
+        },
+        {
+            "usage": "30-70",
+            "power_cost": "<MID_COST",
+            "governor": "conservative"
+        },
+        {
+            "usage": "default",
+            "power_cost": "default",
+            "governor": "powersave"
+        }
+    ]
+}
