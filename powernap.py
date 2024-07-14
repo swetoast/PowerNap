@@ -5,6 +5,7 @@ import sys
 import time
 import psutil
 import glob
+import json
 from datetime import datetime
 from prettytable import PrettyTable
 import platform
@@ -227,18 +228,27 @@ class CPUMonitor:
 
     @staticmethod
     def choose_governor(usage, power_cost):
-        if power_cost is None:
-            return 'powersave'
-        if usage > 85 and power_cost < LOW_COST:
-            return 'performance'
-        elif 70 <= usage <= 85 and power_cost < MID_COST:
-            return 'schedutil'
-        elif usage < 30 and power_cost > HIGH_COST:
-            return 'powersave'
-        elif 30 <= usage < 70 and power_cost < MID_COST:
-            return 'conservative'
-        else:
-            return 'powersave'
+        # Load the rules from the JSON file
+        with open('rules.json', 'r') as file:
+            rules = json.load(file)['rules']
+
+        # Apply the rules
+        for rule in rules:
+            if rule['usage'] == 'None' and power_cost is None:
+                return rule['governor']
+            elif rule['usage'].startswith('>') and usage > int(rule['usage'][1:]) and eval(f"power_cost {rule['power_cost']}"):
+                return rule['governor']
+            elif rule['usage'].startswith('<') and usage < int(rule['usage'][1:]) and eval(f"power_cost {rule['power_cost']}"):
+                return rule['governor']
+            elif '-' in rule['usage']:
+                usage_min, usage_max = map(int, rule['usage'].split('-'))
+                if usage_min <= usage <= usage_max and eval(f"power_cost {rule['power_cost']}"):
+                    return rule['governor']
+            elif rule['usage'] == 'default':
+                return rule['governor']
+
+        print("No matching rule found.")
+        return None
 
 def set_cpu_governor(governor):
     governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
