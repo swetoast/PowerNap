@@ -9,8 +9,6 @@ from datetime import datetime
 from prettytable import PrettyTable
 import platform
 import configparser
-from collections import deque
-from statistics import mean, median  # Import mean and median
 
 # Load the configuration file
 config = configparser.ConfigParser()
@@ -26,25 +24,54 @@ DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
 
 # Load cost constants from the configuration file
-HIGH_COST = config.getfloat('CostConstants', 'HIGH_COST')
-MID_COST = config.getfloat('CostConstants', 'MID_COST')
-LOW_COST = config.getfloat('CostConstants', 'LOW_COST')
+HIGH_COST = config.getfloat('Cost', 'HIGH_COST')
+MID_COST = config.getfloat('Cost', 'MID_COST')
+LOW_COST = config.getfloat('Cost', 'LOW_COST')
 
 # Load area code from the configuration file
-AREA = config.get('AreaCode', 'AREA')
+AREA = config.get('Database', 'AREA')
 
 # Load sleep interval from the configuration file
-SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
+SLEEP_INTERVAL = config.getint('Database', 'SLEEP_INTERVAL')
 
 # Load data retention settings from the configuration file
-DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
-DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
+DATA_RETENTION_DAYS = config.getint('Database', 'DAYS')
+DATA_RETENTION_ENABLED = config.getboolean('Database', 'ENABLED')
 
 # Load commit interval from the configuration file
-COMMIT_INTERVAL = config.getint('CommitInterval', 'INTERVAL')
+COMMIT_INTERVAL = config.getint('Database', 'COMMIT_INTERVAL')
 
 # Load usage calculation method from the configuration file
-USAGE_CALCULATION_METHOD = config.get('UsageCalculation', 'METHOD').split('#')[0].strip()
+USAGE_CALCULATION_METHOD = config.get('Database', 'METHOD').split('#')[0].strip()
+
+# Load CPU usage and cost ranges for each governor from the configuration file
+POWERSAVE = {
+    'USAGE_MIN': config.getint('POWERSAVE', 'USAGE_MIN'),
+    'USAGE_MAX': config.getint('POWERSAVE', 'USAGE_MAX'),
+    'COST_MIN': config.getint('POWERSAVE', 'COST_MIN'),
+    'COST_MAX': config.getint('POWERSAVE', 'COST_MAX')
+}
+
+CONSERVATIVE = {
+    'USAGE_MIN': config.getint('CONSERVATIVE', 'USAGE_MIN'),
+    'USAGE_MAX': config.getint('CONSERVATIVE', 'USAGE_MAX'),
+    'COST_MIN': config.getint('CONSERVATIVE', 'COST_MIN'),
+    'COST_MAX': config.getint('CONSERVATIVE', 'COST_MAX')
+}
+
+SCHEDUTIL = {
+    'USAGE_MIN': config.getint('SCHEDUTIL', 'USAGE_MIN'),
+    'USAGE_MAX': config.getint('SCHEDUTIL', 'USAGE_MAX'),
+    'COST_MIN': config.getint('SCHEDUTIL', 'COST_MIN'),
+    'COST_MAX': config.getint('SCHEDUTIL', 'COST_MAX')
+}
+
+PERFORMANCE = {
+    'USAGE_MIN': config.getint('PERFORMANCE', 'USAGE_MIN'),
+    'USAGE_MAX': config.getint('PERFORMANCE', 'USAGE_MAX'),
+    'COST_MIN': config.getint('PERFORMANCE', 'COST_MIN'),
+    'COST_MAX': config.getint('PERFORMANCE', 'COST_MAX')
+}
 
 class DatabaseManager:
     def __init__(self, db_file):
@@ -213,6 +240,7 @@ class CPUMonitor:
     def get_cpu_info():
         cpu_percent = psutil.cpu_percent(interval=1)
         cpu_governor = CPUMonitor.get_cpu_governor()
+        return
         return cpu_percent, cpu_governor
 
     @staticmethod
@@ -227,16 +255,14 @@ class CPUMonitor:
 
     @staticmethod
     def choose_governor(usage, power_cost):
-        if power_cost is None:
+        if POWERSAVE['USAGE_MIN'] <= usage <= POWERSAVE['USAGE_MAX'] and POWERSAVE['COST_MIN'] <= power_cost <= POWERSAVE['COST_MAX']:
             return 'powersave'
-        if usage > 85 and power_cost < LOW_COST:
-            return 'performance'
-        elif 70 <= usage <= 85 and power_cost < MID_COST:
-            return 'schedutil'
-        elif usage < 30 and power_cost > HIGH_COST:
-            return 'powersave'
-        elif 30 <= usage < 70 and power_cost < MID_COST:
+        elif CONSERVATIVE['USAGE_MIN'] <= usage <= CONSERVATIVE['USAGE_MAX'] and CONSERVATIVE['COST_MIN'] <= power_cost <= CONSERVATIVE['COST_MAX']:
             return 'conservative'
+        elif SCHEDUTIL['USAGE_MIN'] <= usage <= SCHEDUTIL['USAGE_MAX'] and SCHEDUTIL['COST_MIN'] <= power_cost <= SCHEDUTIL['COST_MAX']:
+            return 'schedutil'
+        elif PERFORMANCE['USAGE_MIN'] <= usage <= PERFORMANCE['USAGE_MAX'] and PERFORMANCE['COST_MIN'] <= power_cost <= PERFORMANCE['COST_MAX']:
+            return 'performance'
         else:
             return 'powersave'
 
