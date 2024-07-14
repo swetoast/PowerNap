@@ -234,9 +234,7 @@ class CPUMonitor:
 
         # Apply the rules
         for rule in rules:
-            if rule['usage'] == 'None' and power_cost is None:
-                return rule['governor']
-            elif rule['usage_comparison'] == 'higher_than' and usage > rule['usage_value'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
+            if rule['usage_comparison'] == 'higher_than' and usage > rule['usage_value'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
                 return rule['governor']
             elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_value'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
                 return rule['governor']
@@ -244,6 +242,9 @@ class CPUMonitor:
                 return rule['governor']
             elif rule['usage_comparison'] == 'between' and rule['usage_value'] <= usage <= rule['usage_value2'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
                 return rule['governor']
+            elif rule['usage_comparison'] == 'default':
+                return rule['governor']
+
         print("No matching rule found.")
         return None
 
