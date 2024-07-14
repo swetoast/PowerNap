@@ -26,25 +26,25 @@ DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
 
 # Load cost constants from the configuration file
-HIGH_COST = config.getfloat('CostConstants', 'HIGH_COST')
-MID_COST = config.getfloat('CostConstants', 'MID_COST')
-LOW_COST = config.getfloat('CostConstants', 'LOW_COST')
+HIGH_COST = config.getfloat('Cost', 'HIGH_COST')
+MID_COST = config.getfloat('Cost', 'MID_COST')
+LOW_COST = config.getfloat('Cost', 'LOW_COST')
 
 # Load area code from the configuration file
-AREA = config.get('AreaCode', 'AREA')
+AREA = config.get('Cost', 'AREA')
 
 # Load sleep interval from the configuration file
-SLEEP_INTERVAL = config.getint('SleepInterval', 'INTERVAL')
+SLEEP_INTERVAL = config.getint('Database', 'SLEEP_INTERVAL')
 
 # Load data retention settings from the configuration file
-DATA_RETENTION_DAYS = config.getint('DataRetention', 'DAYS')
-DATA_RETENTION_ENABLED = config.getboolean('DataRetention', 'ENABLED')
+DATA_RETENTION_DAYS = config.getint('Database', 'DAYS')
+DATA_RETENTION_ENABLED = config.getboolean('Database', 'ENABLED')
 
 # Load commit interval from the configuration file
-COMMIT_INTERVAL = config.getint('CommitInterval', 'INTERVAL')
+COMMIT_INTERVAL = config.getint('Database', 'COMMIT_INTERVAL')
 
 # Load usage calculation method from the configuration file
-USAGE_CALCULATION_METHOD = config.get('UsageCalculation', 'METHOD').split('#')[0].strip()
+USAGE_CALCULATION_METHOD = config.get('Database', 'METHOD').split('#')[0].strip()
 
 class DatabaseManager:
     def __init__(self, db_file):
