@@ -236,17 +236,14 @@ class CPUMonitor:
         for rule in rules:
             if rule['usage'] == 'None' and power_cost is None:
                 return rule['governor']
-            elif rule['usage'].startswith('>') and usage > int(rule['usage'][1:]) and eval(f"power_cost {rule['power_cost']}"):
+            elif rule['usage_comparison'] == 'higher_than' and usage > rule['usage_value'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage'].startswith('<') and usage < int(rule['usage'][1:]) and eval(f"power_cost {rule['power_cost']}"):
+            elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_value'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
                 return rule['governor']
-            elif '-' in rule['usage']:
-                usage_min, usage_max = map(int, rule['usage'].split('-'))
-                if usage_min <= usage <= usage_max and eval(f"power_cost {rule['power_cost']}"):
-                    return rule['governor']
-            elif rule['usage'] == 'default':
+            elif rule['usage_comparison'] == 'between' and rule['usage_value'] <= usage <= rule['usage_value2'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-
+            elif rule['usage_comparison'] == 'between' and rule['usage_value'] <= usage <= rule['usage_value2'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
+                return rule['governor']
         print("No matching rule found.")
         return None
 
