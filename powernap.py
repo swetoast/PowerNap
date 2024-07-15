@@ -229,13 +229,13 @@ class CPUMonitor:
     def choose_governor(usage, power_cost):
         # Apply the rules
         for rule in RULES:
-            if rule['usage_comparison'] == 'higher_than' and usage > rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
+            if rule['usage_comparison'] == 'higher_than' and usage > rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'lower_then' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'higher_then' and power_cost > rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'lower_then' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'higher_then' and power_cost > rule['power_cost_value']:
                 return rule['governor']
             elif rule['usage_comparison'] == 'default':
                 return rule['governor']
