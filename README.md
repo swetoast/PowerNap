@@ -36,7 +36,7 @@ The `powernap.conf` file contains several configuration options:
     - `AREA`: This is the area code for which to fetch electricity prices. The value should be a string that represents the area code.
     - `SLEEP_INTERVAL`: This is the interval (in seconds) at which the script should sleep between iterations of the main loop. The value should be an integer that represents the number of seconds.
     - `DAYS`: This is the number of days to retain data in the database. The value should be an integer that represents the number of days.
-    - `ENABLED`: This is a boolean value that indicates whether data retention is enabled. If it's set to `True`, the script will remove data older than the number of days specified in `DAYS` from the database.
+    - `ENABLED`: This is a boolean value that indicates whether data retention is enabled. If it's set to true, the script will remove data older than the number of days specified in `DAYS` from the database.
     - `COMMIT_INTERVAL`: This is the interval (in minutes) at which data should be committed to the database. The value should be an integer that represents the number of minutes.
     - `METHOD`: This specifies the method for calculating CPU usage. The value can be either 'average' or 'median'.
 
