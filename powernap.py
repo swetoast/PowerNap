@@ -26,11 +26,6 @@ config.read(os.path.join(script_dir, 'powernap.conf'))
 DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
 
-# Load cost constants from the configuration file
-HIGH_COST = config.getfloat('Cost', 'HIGH_COST')
-MID_COST = config.getfloat('Cost', 'MID_COST')
-LOW_COST = config.getfloat('Cost', 'LOW_COST')
-
 # Load area code from the configuration file
 AREA = config.get('Cost', 'AREA')
 
@@ -46,6 +41,10 @@ COMMIT_INTERVAL = config.getint('Database', 'COMMIT_INTERVAL')
 
 # Load usage calculation method from the configuration file
 USAGE_CALCULATION_METHOD = config.get('Database', 'METHOD').split('#')[0].strip()
+
+# Load the rules from the JSON file
+with open('rules.json', 'r') as file:
+    RULES = json.load(file)['rules']
 
 class DatabaseManager:
     def __init__(self, db_file):
@@ -185,7 +184,7 @@ class CPUManager(DatabaseManager):
     def get_usage(self, cpu_core_id, method):
         """Get the CPU usage for a specific core, calculated using the specified method."""
         if self.cpu_data[cpu_core_id]:  # Check if cpu_data is not empty
-            usage_data = [data[3] for data in self.cpu_data[cpu_core_id]]
+            usage_data = [data[3] for data in cpu_data_deque]
 
             if method == 'average':
                 return mean(usage_data)
@@ -228,19 +227,15 @@ class CPUMonitor:
 
     @staticmethod
     def choose_governor(usage, power_cost):
-        # Load the rules from the JSON file
-        with open('rules.json', 'r') as file:
-            rules = json.load(file)['rules']
-
         # Apply the rules
-        for rule in rules:
-            if rule['usage_comparison'] == 'higher_than' and usage > rule['usage_value'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
+        for rule in RULES:
+            if rule['usage_comparison'] == 'higher_than' and usage > rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_value'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'lower_than' and usage < rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'between' and rule['usage_value'] <= usage <= rule['usage_value2'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'lower_than' and power_cost < rule['power_cost_value']:
                 return rule['governor']
-            elif rule['usage_comparison'] == 'between' and rule['usage_value'] <= usage <= rule['usage_value2'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
+            elif rule['usage_comparison'] == 'between' and rule['usage_lower_bound'] <= usage <= rule['usage_upper_bound'] and rule['power_cost_comparison'] == 'higher_than' and power_cost > rule['power_cost_value']:
                 return rule['governor']
             elif rule['usage_comparison'] == 'default':
                 return rule['governor']
