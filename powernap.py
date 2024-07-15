@@ -11,7 +11,7 @@ from prettytable import PrettyTable
 import platform
 import configparser
 from collections import deque
-from statistics import mean, median  # Import mean and median
+from statistics import mean, median
 
 # Load the configuration file
 config = configparser.ConfigParser()
