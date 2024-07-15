@@ -96,31 +96,25 @@ class PriceManager(DatabaseManager):
         try:
             return self.execute_query(query, data)
         except sqlite3.IntegrityError:
-            # Ignore the exception and continue
             pass
 
     def read_and_present_data(self):
         query = "SELECT * FROM prices"
         rows = self.execute_query(query)
 
-        # Create a PrettyTable instance
         table = PrettyTable()
 
-        # Specify the Column Names while initializing the Table
         table.field_names = ["ID", "SEK_per_kWh", "Time Start", "Time End"]
 
-        # Add rows
         for row in rows:
             table.add_row(row)
 
-        # Print the table
         print(table)
 
     def get_current_price(self):
         current_hour = datetime.now().isoformat()
         query = f"SELECT SEK_per_kWh FROM prices WHERE time_start <= '{current_hour}' AND time_end > '{current_hour}' ORDER BY id DESC LIMIT 1"
         rows = self.execute_query(query)
-        #print(f"Debug: query = {query}, result = {rows}")  # Debug print
         return rows[0][0] if rows else None
 
 class CPUManager(DatabaseManager):
@@ -163,17 +157,13 @@ class CPUManager(DatabaseManager):
         query = "SELECT * FROM cpu_usage"
         rows = self.execute_query(query)
 
-        # Create a PrettyTable instance
         table = PrettyTable()
 
-        # Specify the Column Names while initializing the Table
         table.field_names = ["ID", "Timestamp", "CPU Cores", "CPU Core ID", "CPU Usage", "CPU Governor"]
 
-        # Add rows
         for row in rows:
             table.add_row(row)
 
-        # Print the table
         print(table)
 
     def get_current_governor(self):
@@ -227,7 +217,6 @@ class CPUMonitor:
 
     @staticmethod
     def choose_governor(usage, power_cost):
-        # Apply the rules
         for rule in RULES:
             if rule['usage_comparison'] == 'higher_then' and usage > rule['usage_lower_bound'] and rule['power_cost_comparison'] == 'lower_then' and power_cost < rule['power_cost_value']:
                 return rule['governor']
@@ -270,7 +259,7 @@ def main():
         price_manager.read_and_present_data()
         print("\nCPU data:")
         cpu_manager.read_and_present_data()
-        sys.exit()  # Exit the script
+        sys.exit()
 
     last_cleanup_date = datetime.now()
 
