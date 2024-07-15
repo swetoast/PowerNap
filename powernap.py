@@ -22,6 +22,10 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 # Read the configuration file
 config.read(os.path.join(script_dir, 'powernap.conf'))
 
+# Load the rules from the JSON file
+with open(os.path.join(script_dir, 'rules.json'), 'r') as file:
+    RULES = json.load(file)['rules']
+
 # Define the paths to the databases
 DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
@@ -41,10 +45,6 @@ COMMIT_INTERVAL = config.getint('Database', 'COMMIT_INTERVAL')
 
 # Load usage calculation method from the configuration file
 USAGE_CALCULATION_METHOD = config.get('Database', 'METHOD').split('#')[0].strip()
-
-# Load the rules from the JSON file
-with open('rules.json', 'r') as file:
-    RULES = json.load(file)['rules']
 
 class DatabaseManager:
     def __init__(self, db_file):
@@ -184,7 +184,7 @@ class CPUManager(DatabaseManager):
     def get_usage(self, cpu_core_id, method):
         """Get the CPU usage for a specific core, calculated using the specified method."""
         if self.cpu_data[cpu_core_id]:  # Check if cpu_data is not empty
-            usage_data = [data[3] for data in cpu_data_deque]
+            usage_data = [data[3] for data in self.cpu_data[cpu_core_id]]
 
             if method == 'average':
                 return mean(usage_data)
