@@ -87,9 +87,7 @@ Here is an example of a `rules.json` file:
             "governor": "conservative"
         },
         {
-            "usage_lower_bound": null,
             "usage_comparison": "default",
-            "power_cost_value": null,
             "power_cost_comparison": "default",
             "governor": "powersave"
         }
