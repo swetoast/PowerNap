@@ -31,7 +31,7 @@ DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
 
 # Load area code from the configuration file
-AREA = config.get('Cost', 'AREA')
+AREA = config.get('Database', 'AREA')
 
 # Load sleep interval from the configuration file
 SLEEP_INTERVAL = config.getint('Database', 'SLEEP_INTERVAL')
