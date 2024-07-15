@@ -28,21 +28,17 @@ Welcome to PowerNap! This is a Python-based tool that keeps an eye on your CPU u
     ```bash
     pip install -r requirements.txt
     ```
-
 ## Configuration
 
-The `powernap.conf` file contains the following configuration options:
+The `powernap.conf` file contains several configuration options:
 
-- `Database`: This section specifies the area code for which to fetch electricity prices, the sleep interval between iterations of the main loop, data retention settings, the interval at which data should be committed to the database, and the method for calculating CPU usage.
-    ```ini
-    [Database]
-    AREA = SE3
-    SLEEP_INTERVAL = 60
-    DAYS = 1
-    ENABLED = True
-    COMMIT_INTERVAL = 5
-    METHOD = median
-    ```
+- `Database`: This section contains several configuration options related to the database and the main loop of the script.
+    - `AREA`: This is the area code for which to fetch electricity prices. The value should be a string that represents the area code.
+    - `SLEEP_INTERVAL`: This is the interval (in seconds) at which the script should sleep between iterations of the main loop. The value should be an integer that represents the number of seconds.
+    - `DAYS`: This is the number of days to retain data in the database. The value should be an integer that represents the number of days.
+    - `ENABLED`: This is a boolean value that indicates whether data retention is enabled. If it's set to `True`, the script will remove data older than the number of days specified in `DAYS` from the database.
+    - `COMMIT_INTERVAL`: This is the interval (in minutes) at which data should be committed to the database. The value should be an integer that represents the number of minutes.
+    - `METHOD`: This specifies the method for calculating CPU usage. The value can be either 'average' or 'median'.
 
 ## Rules Configuration
 
