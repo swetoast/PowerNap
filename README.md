@@ -38,7 +38,7 @@ The `powernap.conf` file contains several configuration options:
     - `DAYS`: This is the number of days to retain data in the database. The value should be an integer that represents the number of days.
     - `ENABLED`: This is a boolean value that indicates whether data retention is enabled. If it's set to `True`, the script will remove data older than the number of days specified in `DAYS` from the database.
     - `COMMIT_INTERVAL`: This is the interval (in minutes) at which data should be committed to the database. The value should be an integer that represents the number of minutes.
-    - `METHOD`: This specifies the method for calculating CPU usage. The value can be either 'average' or 'median'.
+    - `METHOD`: This specifies the method for calculating CPU usage. The value can be either `average` or `median`.
 
 ## Rules Configuration
 
