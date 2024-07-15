@@ -2,9 +2,9 @@
     "rules": [
         {
             "usage_lower_bound": 85,
-            "usage_comparison": "higher_than",
+            "usage_comparison": "higher_then",
             "power_cost_value": 0.5,
-            "power_cost_comparison": "lower_than",
+            "power_cost_comparison": "lower_then",
             "governor": "performance"
         },
         {
@@ -12,14 +12,14 @@
             "usage_upper_bound": 85,
             "usage_comparison": "between",
             "power_cost_value": 0.8,
-            "power_cost_comparison": "lower_than",
+            "power_cost_comparison": "lower_then",
             "governor": "schedutil"
         },
         {
             "usage_lower_bound": 30,
-            "usage_comparison": "lower_than",
+            "usage_comparison": "lower_then",
             "power_cost_value": 1.0,
-            "power_cost_comparison": "higher_than",
+            "power_cost_comparison": "higher_then",
             "governor": "powersave"
         },
         {
@@ -27,7 +27,7 @@
             "usage_upper_bound": 70,
             "usage_comparison": "between",
             "power_cost_value": 0.8,
-            "power_cost_comparison": "lower_than",
+            "power_cost_comparison": "lower_then",
             "governor": "conservative"
         },
         {
