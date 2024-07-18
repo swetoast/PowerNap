@@ -31,7 +31,7 @@ Here's the structure of a rule:
 
 Here's an example of a rule:
 
-\```json
+```json
 {
     "usage_comparison": "higher_then",
     "usage_lower_bound": 50,
@@ -39,6 +39,6 @@ Here's an example of a rule:
     "power_cost_value": 0.5,
     "governor": "performance"
 }
-\```
+```
 
 This rule states that if the CPU usage is higher than 50% and the power cost is lower than 0.5, then the CPU governor should be set to "performance".
