@@ -51,49 +51,7 @@ The `rules.json` file contains a set of rules that PowerNap uses to decide which
 - `power_cost_comparison`: The comparison operator for the power cost. Can be `lower_then`, `higher_then`, or `default`.
 - `governor`: The CPU governor to use if the rule applies.
 
-Here is an example of a `rules.json` file:
-
-```json
-{
-    "rules": [
-        {
-            "usage_lower_bound": 85,
-            "usage_comparison": "higher_then",
-            "power_cost_value": 0.5,
-            "power_cost_comparison": "lower_then",
-            "governor": "performance"
-        },
-        {
-            "usage_lower_bound": 70,
-            "usage_upper_bound": 85,
-            "usage_comparison": "between",
-            "power_cost_value": 0.8,
-            "power_cost_comparison": "lower_then",
-            "governor": "schedutil"
-        },
-        {
-            "usage_lower_bound": 30,
-            "usage_comparison": "lower_then",
-            "power_cost_value": 1.0,
-            "power_cost_comparison": "higher_then",
-            "governor": "powersave"
-        },
-        {
-            "usage_lower_bound": 30,
-            "usage_upper_bound": 70,
-            "usage_comparison": "between",
-            "power_cost_value": 0.8,
-            "power_cost_comparison": "lower_then",
-            "governor": "conservative"
-        },
-        {
-            "usage_comparison": "default",
-            "power_cost_comparison": "default",
-            "governor": "powersave"
-        }
-    ]
-}
-```
+For detailed guidance on rule creation, please refer to the  [rules.md](rules.md) document.
 
 ## Systemd Service
 
