@@ -42,14 +42,7 @@ The `powernap.conf` file contains several configuration options:
 
 ## Rules Configuration
 
-The `rules.json` file contains a set of rules that PowerNap uses to decide which CPU governor to use based on the current CPU usage and electricity prices. Each rule is a JSON object with the following properties:
-
-- `usage_lower_bound`: The lower bound of the CPU usage for this rule.
-- `usage_upper_bound`: The upper bound of the CPU usage for this rule (only used if `usage_comparison` is `between`).
-- `usage_comparison`: The comparison operator for the CPU usage. Can be `higher_then`, `lower_then`, `between`, or `default`.
-- `power_cost_value`: The value of the electricity price for this rule.
-- `power_cost_comparison`: The comparison operator for the power cost. Can be `lower_then`, `higher_then`, or `default`.
-- `governor`: The CPU governor to use if the rule applies.
+The `rules.json` file contains a set of rules that PowerNap uses to decide which CPU governor to use based on the current CPU usage and electricity prices.
 
 For detailed guidance on rule creation, please refer to the  [rules.md](rules.md) document.
 
