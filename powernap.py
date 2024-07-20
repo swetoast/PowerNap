@@ -13,37 +13,23 @@ import configparser
 from collections import deque
 from statistics import mean, median
 
-# Load the configuration file
+# Load the configuration file and get the directory of the current script
 config = configparser.ConfigParser()
-
-# Get the directory of the current script
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
-# Read the configuration file
+# Read the configuration file, load the rules from the JSON file
 config.read(os.path.join(script_dir, 'powernap.conf'))
-
-# Load the rules from the JSON file
 with open(os.path.join(script_dir, 'rules.json'), 'r') as file:
     RULES = json.load(file)['rules']
 
-# Define the paths to the databases
+# This script sets the paths to the ‘prices’ and ‘cpu’ databases, retrieves the area code, sleep interval, data retention settings, commit interval, and usage calculation method from the configuration file.
 DATABASE_PRICES = os.path.join(script_dir, "prices.db")
 DATABASE_CPU = os.path.join(script_dir, "cpu.db")
-
-# Load area code from the configuration file
 AREA = config.get('Database', 'AREA')
-
-# Load sleep interval from the configuration file
 SLEEP_INTERVAL = config.getint('Database', 'SLEEP_INTERVAL')
-
-# Load data retention settings from the configuration file
 DATA_RETENTION_DAYS = config.getint('Database', 'DAYS')
 DATA_RETENTION_ENABLED = config.getboolean('Database', 'ENABLED')
-
-# Load commit interval from the configuration file
 COMMIT_INTERVAL = config.getint('Database', 'COMMIT_INTERVAL')
-
-# Load usage calculation method from the configuration file
 USAGE_CALCULATION_METHOD = config.get('Database', 'METHOD').split('#')[0].strip()
 
 class DatabaseManager:
