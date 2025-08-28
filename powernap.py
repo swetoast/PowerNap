@@ -215,6 +215,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-        if datetime.now().minute % COMMIT_INTERVAL ==
