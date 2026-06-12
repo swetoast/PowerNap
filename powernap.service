@@ -1,0 +1,21 @@
+[Unit]
+Description=PowerNap electricity-price-aware CPU governor controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=powernap
+Group=powernap
+WorkingDirectory=/opt/powernap
+Environment=POWERNAP_CONFIG=/opt/powernap/powernap.conf
+ExecStart=/usr/bin/python3 /opt/powernap/powernap.py
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/powernap /sys/devices/system/cpu
+
+[Install]
+WantedBy=multi-user.target
