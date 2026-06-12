@@ -1,4 +1,4 @@
-# PowerNap v2
+# PowerNap
 
 PowerNap is a formulaic, policy-gated Linux CPU governor controller that adjusts CPU power behaviour based on real-time electricity prices, current CPU load, workload shape, price lookahead, and thermal state.
 
