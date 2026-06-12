@@ -1,460 +1,632 @@
 #!/usr/bin/env python3
 """
-PowerNap - Enhanced CPU Governor Adjuster based on real-time electricity prices.
+PowerNap - electricity-price-aware CPU governor controller.
 
-This script monitors CPU usage and dynamically adjusts the CPU frequency governor according 
-to current electricity prices, with advanced strategies to reduce power cost while maintaining 
-performance stability.
-
-New features in this refactored version:
-- **Hysteresis Logic:** Separate up/down CPU usage thresholds prevent rapid governor flapping. 
-  The CPU must drop significantly below an "up" threshold before downshifting, and rise sufficiently 
-  above a "down" threshold before upshifting.
-- **Cooldown Period:** After scaling up (to a higher-performance governor), it waits a short period 
-  before allowing a scale-down. This avoids bouncing governors due to short transient changes.
-- **Smoothed CPU Measurement:** Uses an exponential moving average of CPU usage to stabilize short-term 
-  spikes and dips when making decisions.
-- **Robust Governor Selection:** Chooses among 'performance', 'schedutil', 'conservative', and 'powersave' 
-  based on smoothed usage trends and electricity price (high/mid/low cost thresholds). Global (system-wide) 
-  governor is set, as modern systems typically apply frequency policy per processor package.
-- **Resilient API Handling:** Implements exponential backoff with jitter for price data fetches to handle 
-  network issues gracefully without spamming the API. All API calls enforce HTTPS with certificate verification.
-- **Security Enhancements:** Encourages least-privilege operation. Config and database files are locked 
-  down to owner-only access. The code is designed to be run as a dedicated user with minimal system 
-  permissions (see Deployment notes below).
-
-Deployment Security Tips:
-- **Least Privilege:** Create a dedicated user (e.g., "powernap") to run this script. Ensure the 
-  configuration (powernap.conf) and database files are owned by this user and have permissions 600 
-  (read/write by owner only).
-- **Systemd Hardening (Example):**
-    - User=powernap (run as non-root user)
-    - NoNewPrivileges=true, PrivateTmp=true, ProtectSystem=full, ProtectHome=true
-    - ReadWritePaths=/path/to/powernap /sys/devices/system/cpu/ (allow writing only to required paths)
-    - CapabilityBoundingSet=CAP_SYS_ADMIN (to permit governor changes without full root, if supported)
-- **Sudo Alternative:** If not using systemd, configure /etc/sudoers to allow the powernap user to execute 
-  only the necessary commands (e.g., writing to scaling_governor) as root, rather than running the entire 
-  script as root.
+Design goals:
+- Prefer stability over rapid governor flapping.
+- Store electricity-price intervals with epoch timestamps for reliable lookup.
+- Keep the runtime small: stdlib + requests + psutil only.
+- Be systemd-friendly and safe to stop with SIGTERM/SIGINT.
 """
+from __future__ import annotations
+
+import configparser
+import glob
+import logging
 import os
+import random
+import signal
+import sqlite3
 import sys
 import time
-import glob
-import sqlite3
-import requests
-import psutil
-import configparser
-import random
-from datetime import datetime, timedelta
 from collections import deque
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from statistics import mean, median
+from typing import Iterable, Optional
 
-# Define hysteresis and smoothing constants
-PERF_ENTER_UTIL = 85   # CPU usage % threshold to enter performance mode
-PERF_EXIT_UTIL  = 70   # CPU usage % threshold to exit performance mode (hysteresis lower than enter)
-PSAVE_ENTER_UTIL = 30  # CPU usage % threshold to enter powersave mode
-PSAVE_EXIT_UTIL  = 40  # CPU usage % threshold to exit powersave mode (hysteresis higher than enter)
-SMOOTH_FACTOR   = 0.3  # Smoothing factor for exponential moving average (0 < alpha <= 1)
-COOLDOWN_SEC    = 15   # Minimum seconds to wait after an upscale before allowing a downscale
-GOVERNOR_PRIORITY = { 'powersave': 0, 'conservative': 1, 'schedutil': 2, 'performance': 3 }
+import psutil
+import requests
 
-# Configuration Loading and Validation
-def load_config(config_path):
-    """Load configuration from file, applying defaults and validations."""
-    config = configparser.ConfigParser()
-    config.optionxform = str  # preserve case
-    if not config.read(config_path):
-        print(f"Warning: Config file not found at {config_path}, using defaults.")
-    def get_opt(section, option, cast=str, default=None):
+APP_NAME = "PowerNap"
+DEFAULT_CONFIG_NAME = "powernap.conf"
+GOVERNOR_PRIORITY = {
+    "powersave": 0,
+    "conservative": 1,
+    "schedutil": 2,
+    "performance": 3,
+}
+PREFERRED_GOVERNORS = ("performance", "schedutil", "conservative", "powersave")
+STOP_REQUESTED = False
+
+
+def request_stop(signum, _frame):
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
+    logging.info("Received signal %s; shutting down cleanly after current cycle.", signum)
+
+
+@dataclass(frozen=True)
+class Config:
+    high_cost: float = 1.0
+    mid_cost: float = 0.5
+    low_cost: float = 0.1
+    area: str = "SE3"
+    sleep_interval: int = 5
+    data_retention_days: int = 30
+    data_retention_enabled: bool = True
+    commit_interval_minutes: int = 5
+    usage_method: str = "median"
+    perf_enter_util: float = 85.0
+    perf_exit_util: float = 70.0
+    psave_enter_util: float = 30.0
+    psave_exit_util: float = 40.0
+    smooth_factor: float = 0.30
+    cooldown_sec: int = 15
+    request_timeout_sec: int = 10
+    log_level: str = "INFO"
+    database_dir: str = "."
+
+    @property
+    def thresholds(self) -> tuple[float, float, float]:
+        return self.high_cost, self.mid_cost, self.low_cost
+
+
+def _strip_inline_comment(value: str) -> str:
+    return value.split("#", 1)[0].strip()
+
+
+def load_config(config_path: Path) -> Config:
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    parser.read(config_path)
+
+    def get(section: str, option: str, default, cast):
         try:
-            value = config.get(section, option)
+            raw = parser.get(section, option)
         except (configparser.NoSectionError, configparser.NoOptionError):
-            if default is None:
-                raise
             return default
-        # Strip inline comments for string/bool types
-        if cast in (str, bool):
-            value = value.split('#')[0].strip()
-        return config.getboolean(section, option) if cast is bool else cast(value)
-    cfg = {}
-    defaults = {
-        ('CostConstants', 'HIGH_COST'): 1.0,
-        ('CostConstants', 'MID_COST'): 0.5,
-        ('CostConstants', 'LOW_COST'): 0.1,
-        ('AreaCode', 'AREA'): 'SE3',
-        ('SleepInterval', 'INTERVAL'): 5,
-        ('DataRetention', 'DAYS'): 30,
-        ('DataRetention', 'ENABLED'): True,
-        ('CommitInterval', 'INTERVAL'): 5,
-        ('UsageCalculation', 'METHOD'): 'median',
-    }
-    try:
-        cfg['HIGH_COST'] = get_opt('CostConstants', 'HIGH_COST', float, defaults[('CostConstants','HIGH_COST')])
-        cfg['MID_COST']  = get_opt('CostConstants', 'MID_COST', float, defaults[('CostConstants','MID_COST')])
-        cfg['LOW_COST']  = get_opt('CostConstants', 'LOW_COST', float, defaults[('CostConstants','LOW_COST')])
-        if not (cfg['HIGH_COST'] > cfg['MID_COST'] > cfg['LOW_COST']):
-            print(f"Warning: Cost thresholds not in strict HIGH>MID>LOW order (HIGH={cfg['HIGH_COST']}, MID={cfg['MID_COST']}, LOW={cfg['LOW_COST']}).")
-        cfg['AREA'] = get_opt('AreaCode', 'AREA', str, defaults[('AreaCode','AREA')])
-        cfg['SLEEP_INTERVAL'] = get_opt('SleepInterval', 'INTERVAL', int, defaults[('SleepInterval','INTERVAL')])
-        cfg['DATA_RETENTION_DAYS'] = get_opt('DataRetention', 'DAYS', int, defaults[('DataRetention','DAYS')])
-        cfg['DATA_RETENTION_ENABLED'] = get_opt('DataRetention', 'ENABLED', bool, defaults[('DataRetention','ENABLED')])
-        cfg['COMMIT_INTERVAL'] = get_opt('CommitInterval', 'INTERVAL', int, defaults[('CommitInterval','INTERVAL')])
-        method_val = get_opt('UsageCalculation', 'METHOD', str, defaults[('UsageCalculation','METHOD')]).lower()
-        if method_val not in ('average', 'median'):
-            print(f"Warning: Unknown usage calculation method '{method_val}', defaulting to 'median'.")
-            method_val = 'median'
-        cfg['USAGE_METHOD'] = method_val
-    except Exception as e:
-        print(f"Error loading configuration: {e}")
-        sys.exit(1)
+        if cast is bool:
+            return parser.getboolean(section, option)
+        if cast is str:
+            return _strip_inline_comment(raw)
+        return cast(_strip_inline_comment(raw))
+
+    cfg = Config(
+        high_cost=get("CostConstants", "HIGH_COST", Config.high_cost, float),
+        mid_cost=get("CostConstants", "MID_COST", Config.mid_cost, float),
+        low_cost=get("CostConstants", "LOW_COST", Config.low_cost, float),
+        area=get("AreaCode", "AREA", Config.area, str),
+        sleep_interval=max(1, get("SleepInterval", "INTERVAL", Config.sleep_interval, int)),
+        data_retention_days=max(1, get("DataRetention", "DAYS", Config.data_retention_days, int)),
+        data_retention_enabled=get("DataRetention", "ENABLED", Config.data_retention_enabled, bool),
+        commit_interval_minutes=max(0, get("CommitInterval", "INTERVAL", Config.commit_interval_minutes, int)),
+        usage_method=get("UsageCalculation", "METHOD", Config.usage_method, str).lower(),
+        perf_enter_util=get("GovernorLogic", "PERF_ENTER_UTIL", Config.perf_enter_util, float),
+        perf_exit_util=get("GovernorLogic", "PERF_EXIT_UTIL", Config.perf_exit_util, float),
+        psave_enter_util=get("GovernorLogic", "PSAVE_ENTER_UTIL", Config.psave_enter_util, float),
+        psave_exit_util=get("GovernorLogic", "PSAVE_EXIT_UTIL", Config.psave_exit_util, float),
+        smooth_factor=get("GovernorLogic", "SMOOTH_FACTOR", Config.smooth_factor, float),
+        cooldown_sec=max(0, get("GovernorLogic", "COOLDOWN_SEC", Config.cooldown_sec, int)),
+        request_timeout_sec=max(2, get("Network", "REQUEST_TIMEOUT_SEC", Config.request_timeout_sec, int)),
+        log_level=get("Logging", "LEVEL", Config.log_level, str).upper(),
+        database_dir=get("Storage", "DATABASE_DIR", Config.database_dir, str),
+    )
+
+    if cfg.usage_method not in ("average", "median"):
+        logging.warning("Unknown UsageCalculation.METHOD=%r; using median for runtime decisions.", cfg.usage_method)
+        cfg = Config(**{**cfg.__dict__, "usage_method": "median"})
+    if not (cfg.high_cost > cfg.mid_cost > cfg.low_cost):
+        logging.warning(
+            "Cost thresholds should be HIGH_COST > MID_COST > LOW_COST; got %.3f > %.3f > %.3f.",
+            cfg.high_cost,
+            cfg.mid_cost,
+            cfg.low_cost,
+        )
+    if not (0 < cfg.smooth_factor <= 1):
+        logging.warning("SMOOTH_FACTOR must be > 0 and <= 1; using 0.30.")
+        cfg = Config(**{**cfg.__dict__, "smooth_factor": 0.30})
     return cfg
 
-# Database Managers
+
+def secure_owner_rw(path: Path) -> None:
+    try:
+        if path.exists():
+            path.chmod(0o600)
+    except OSError as exc:
+        logging.debug("Could not chmod %s: %s", path, exc)
+
+
+def parse_price_time(value: str) -> int:
+    # API values are expected to be ISO-8601, often with +01:00/+02:00 offsets.
+    normalized = value.replace("Z", "+00:00")
+    return int(datetime.fromisoformat(normalized).timestamp())
+
+
 class DatabaseManager:
-    def __init__(self, db_file):
-        try:
-            self.conn = sqlite3.connect(db_file, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
-        except sqlite3.Error as e:
-            print(f"Error: Cannot open database {db_file}: {e}")
-            sys.exit(1)
+    def __init__(self, db_file: Path):
+        self.db_file = db_file
+        self.db_file.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(db_file), detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
         self.conn.row_factory = sqlite3.Row
         self._set_pragmas()
-    def _set_pragmas(self):
+        secure_owner_rw(db_file)
+
+    def _set_pragmas(self) -> None:
         self.conn.execute("PRAGMA journal_mode=WAL;")
         self.conn.execute("PRAGMA synchronous=NORMAL;")
         self.conn.execute("PRAGMA temp_store=MEMORY;")
-    def execute(self, query, params=None, commit=False):
-        cur = self.conn.cursor()
+        self.conn.execute("PRAGMA foreign_keys=ON;")
+
+    def execute(self, query: str, params: Iterable = (), commit: bool = False):
         try:
-            cur.execute(query, params or ())
+            cur = self.conn.execute(query, tuple(params))
             if commit:
                 self.conn.commit()
-        except sqlite3.Error as e:
-            print(f"Database error: {e}\n Query: {query}")
+            return cur.fetchall()
+        except sqlite3.Error as exc:
+            logging.error("Database error in %s: %s", self.db_file, exc)
+            logging.debug("Failed query: %s", query)
             return []
-        return cur.fetchall()
-    def executemany(self, query, seq_of_params, commit=False):
-        cur = self.conn.cursor()
+
+    def executemany(self, query: str, seq_of_params: Iterable[Iterable], commit: bool = False):
         try:
-            cur.executemany(query, seq_of_params)
+            cur = self.conn.executemany(query, seq_of_params)
             if commit:
                 self.conn.commit()
-        except sqlite3.Error as e:
-            print(f"Database batch error: {e}\n Query: {query}")
+            return cur.fetchall()
+        except sqlite3.Error as exc:
+            logging.error("Database batch error in %s: %s", self.db_file, exc)
+            logging.debug("Failed query: %s", query)
             return []
-        return cur.fetchall()
-    def remove_old_data(self, days):
-        """Delete records older than 'days' days from relevant tables."""
-        try:
-            with self.conn:
-                self.conn.execute("DELETE FROM prices WHERE time_start < datetime('now', ?)", (f'-{days} days',))
-                self.conn.execute("DELETE FROM cpu_usage WHERE timestamp < datetime('now', ?)", (f'-{days} days',))
-        except sqlite3.Error as e:
-            print(f"Warning: failed to prune old data: {e}")
+
+    def close(self) -> None:
+        self.conn.close()
+
 
 class PriceManager(DatabaseManager):
-    def __init__(self, db_file):
+    def __init__(self, db_file: Path):
         super().__init__(db_file)
         self.conn.execute(
-            """CREATE TABLE IF NOT EXISTS prices (
-                   id INTEGER PRIMARY KEY,
-                   SEK_per_kWh REAL NOT NULL,
-                   time_start TEXT NOT NULL,
-                   time_end TEXT NOT NULL,
-                   UNIQUE(SEK_per_kWh, time_start, time_end)
-               )"""
+            """
+            CREATE TABLE IF NOT EXISTS prices (
+                id INTEGER PRIMARY KEY,
+                SEK_per_kWh REAL NOT NULL,
+                time_start TEXT NOT NULL,
+                time_end TEXT NOT NULL,
+                start_ts INTEGER,
+                end_ts INTEGER,
+                UNIQUE(time_start, time_end)
+            )
+            """
         )
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_time ON prices(time_start, time_end);")
+        self._ensure_epoch_columns()
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_epoch ON prices(start_ts, end_ts);")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_text_time ON prices(time_start, time_end);")
         self.conn.commit()
-    def insert_bulk(self, data_list):
+
+    def _ensure_epoch_columns(self) -> None:
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(prices)")}
+        if "start_ts" not in columns:
+            self.conn.execute("ALTER TABLE prices ADD COLUMN start_ts INTEGER")
+        if "end_ts" not in columns:
+            self.conn.execute("ALTER TABLE prices ADD COLUMN end_ts INTEGER")
+        rows = self.conn.execute("SELECT id, time_start, time_end FROM prices WHERE start_ts IS NULL OR end_ts IS NULL").fetchall()
+        for row in rows:
+            try:
+                self.conn.execute(
+                    "UPDATE prices SET start_ts=?, end_ts=? WHERE id=?",
+                    (parse_price_time(row["time_start"]), parse_price_time(row["time_end"]), row["id"]),
+                )
+            except ValueError:
+                logging.warning("Could not parse stored price interval id=%s", row["id"])
+        self.conn.commit()
+
+    def insert_bulk(self, data_list: list[tuple[float, str, str]]) -> None:
         if not data_list:
             return
+        rows = []
+        for price, start, end in data_list:
+            try:
+                rows.append((float(price), start, end, parse_price_time(start), parse_price_time(end)))
+            except (TypeError, ValueError) as exc:
+                logging.warning("Skipping invalid price row %r: %s", (price, start, end), exc)
         self.executemany(
-            "INSERT OR IGNORE INTO prices(SEK_per_kWh, time_start, time_end) VALUES (?,?,?)",
-            data_list,
-            commit=True
+            """
+            INSERT OR IGNORE INTO prices(SEK_per_kWh, time_start, time_end, start_ts, end_ts)
+            VALUES (?,?,?,?,?)
+            """,
+            rows,
+            commit=True,
         )
-    def get_current_price(self):
-        now_iso = datetime.now().isoformat()
+
+    def get_current_price(self, now_ts: Optional[int] = None) -> Optional[float]:
+        now_ts = int(time.time()) if now_ts is None else now_ts
         rows = self.execute(
-            "SELECT SEK_per_kWh FROM prices WHERE time_start <= ? AND time_end > ? ORDER BY time_start DESC LIMIT 1",
-            (now_iso, now_iso)
+            """
+            SELECT SEK_per_kWh
+            FROM prices
+            WHERE start_ts <= ? AND end_ts > ?
+            ORDER BY start_ts DESC
+            LIMIT 1
+            """,
+            (now_ts, now_ts),
         )
-        return rows[0]["SEK_per_kWh"] if rows else None
-    def has_data_for_date(self, date_str):
-        # Check if any price entry exists for the given date (YYYY-MM-DD prefix).
-        pattern = date_str + '%'
-        rows = self.execute("SELECT 1 FROM prices WHERE time_start LIKE ? LIMIT 1", (pattern,))
-        return len(rows) > 0
+        return float(rows[0]["SEK_per_kWh"]) if rows else None
+
+    def has_data_for_date(self, date_prefix: str) -> bool:
+        rows = self.execute("SELECT 1 FROM prices WHERE time_start LIKE ? LIMIT 1", (date_prefix + "%",))
+        return bool(rows)
+
+    def remove_old_data(self, days: int) -> None:
+        cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+        self.execute("DELETE FROM prices WHERE end_ts < ?", (cutoff,), commit=True)
+
 
 class CPUManager(DatabaseManager):
-    def __init__(self, db_file, core_count):
+    def __init__(self, db_file: Path, core_count: int):
         super().__init__(db_file)
         self.conn.execute(
-            """CREATE TABLE IF NOT EXISTS cpu_usage (
-                   id INTEGER PRIMARY KEY,
-                   timestamp TEXT,
-                   cpu_cores INTEGER NOT NULL,
-                   cpu_core_id INTEGER NOT NULL,
-                   cpu_usage REAL NOT NULL,
-                   cpu_governor TEXT NOT NULL
-               )"""
+            """
+            CREATE TABLE IF NOT EXISTS cpu_usage (
+                id INTEGER PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                timestamp_ts INTEGER NOT NULL,
+                cpu_cores INTEGER NOT NULL,
+                cpu_core_id INTEGER NOT NULL,
+                cpu_usage REAL NOT NULL,
+                cpu_governor TEXT NOT NULL
+            )
+            """
         )
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_cpu_time ON cpu_usage(timestamp);")
+        self._ensure_epoch_column()
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_cpu_timestamp_ts ON cpu_usage(timestamp_ts);")
         self.conn.commit()
         self.core_count = core_count
-        # Buffer for recent usage data (in-memory) for each core
-        self.cpu_data = {i: deque(maxlen=900) for i in range(core_count)}
-    def insert_temp(self, data_tuple):
-        # Append a raw usage record for a core to the in-memory buffer
-        _, _, core_id, _, _ = data_tuple
+        self.cpu_data: dict[int, deque[float]] = {i: deque(maxlen=900) for i in range(core_count)}
+
+    def _ensure_epoch_column(self) -> None:
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(cpu_usage)")}
+        if "timestamp_ts" not in columns:
+            self.conn.execute("ALTER TABLE cpu_usage ADD COLUMN timestamp_ts INTEGER")
+            rows = self.conn.execute("SELECT id, timestamp FROM cpu_usage WHERE timestamp_ts IS NULL").fetchall()
+            for row in rows:
+                try:
+                    ts = int(datetime.fromisoformat(str(row["timestamp"]).replace("Z", "+00:00")).timestamp())
+                except ValueError:
+                    ts = int(time.time())
+                self.conn.execute("UPDATE cpu_usage SET timestamp_ts=? WHERE id=?", (ts, row["id"]))
+            self.conn.commit()
+
+    def insert_temp(self, core_id: int, usage: float) -> None:
         if core_id in self.cpu_data:
-            self.cpu_data[core_id].append(data_tuple)
-    def commit_data(self, current_governor):
-        # Persist median usage for each core in the current interval to the database
-        now_iso = datetime.now().isoformat()
+            self.cpu_data[core_id].append(float(usage))
+
+    def commit_data(self, current_governor: str) -> None:
+        now = datetime.now().astimezone()
+        now_iso = now.isoformat(timespec="seconds")
+        now_ts = int(now.timestamp())
         batch = []
         for cid, dq in self.cpu_data.items():
             if dq:
-                usage_vals = [entry[3] for entry in dq]
-                core_usage = median(usage_vals)  # median of collected samples
-                batch.append((now_iso, self.core_count, cid, core_usage, current_governor))
+                batch.append((now_iso, now_ts, self.core_count, cid, median(dq), current_governor))
         if batch:
             self.executemany(
-                "INSERT INTO cpu_usage(timestamp, cpu_cores, cpu_core_id, cpu_usage, cpu_governor) VALUES (?,?,?,?,?)",
+                """
+                INSERT INTO cpu_usage(timestamp, timestamp_ts, cpu_cores, cpu_core_id, cpu_usage, cpu_governor)
+                VALUES (?,?,?,?,?,?)
+                """,
                 batch,
-                commit=True
+                commit=True,
             )
-            # Reset buffers after committing
             self.cpu_data = {i: deque(maxlen=900) for i in range(self.core_count)}
-            print("[INFO] CPU usage data committed to database.")
-    def get_usage(self, core_id, method='median'):
-        data_points = [entry[3] for entry in self.cpu_data.get(core_id, [])]
-        if not data_points:
-            return None
-        return mean(data_points) if method == 'average' else median(data_points)
+            logging.info("Committed CPU usage for %d cores.", len(batch))
 
-class DataFetcher:
-    @staticmethod
-    def fetch(area_code, date_str):
-        # Fetch price data for given date (format YYYY/MM-DD) and area code.
-        url = f'https://www.elprisetjustnu.se/api/v1/prices/{date_str}_{area_code}.json'
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()  # Raise an exception for HTTP errors (4xx/5xx)
-        except requests.RequestException as e:
-            print(f"[ERROR] Price API request failed: {e}")
-            return None
-        try:
-            data = r.json()
-        except ValueError as e:
-            print(f"[ERROR] Failed to parse API response: {e}")
-            return None
-        # Basic validation of response structure
-        if isinstance(data, list) and data and all(isinstance(item.get('SEK_per_kWh'), (int, float)) for item in data):
-            return data
-        print(f"[ERROR] Unexpected API response format: {data}")
-        return None
+    def remove_old_data(self, days: int) -> None:
+        cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+        self.execute("DELETE FROM cpu_usage WHERE timestamp_ts < ?", (cutoff,), commit=True)
 
-class CPUMonitor:
+
+class PriceFetcher:
+    def __init__(self, timeout_sec: int):
+        self.timeout_sec = timeout_sec
+        self.session = requests.Session()
+
+    def fetch(self, area_code: str, date_str: str) -> Optional[list[dict]]:
+        url = f"https://www.elprisetjustnu.se/api/v1/prices/{date_str}_{area_code}.json"
+        try:
+            response = self.session.get(url, timeout=self.timeout_sec)
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as exc:
+            logging.warning("Price API request failed for %s/%s: %s", area_code, date_str, exc)
+            return None
+        except ValueError as exc:
+            logging.warning("Could not parse price API response for %s/%s: %s", area_code, date_str, exc)
+            return None
+
+        if not isinstance(data, list):
+            logging.warning("Unexpected price API response type: %s", type(data).__name__)
+            return None
+        valid = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            if not all(key in item for key in ("SEK_per_kWh", "time_start", "time_end")):
+                continue
+            if not isinstance(item["SEK_per_kWh"], (int, float)):
+                continue
+            valid.append(item)
+        if not valid:
+            logging.warning("No valid price rows returned for %s/%s.", area_code, date_str)
+            return None
+        return valid
+
+
+class Backoff:
+    def __init__(self, base_sec: int = 60, max_sec: int = 3600):
+        self.base_sec = base_sec
+        self.max_sec = max_sec
+        self.retry_count = 0
+        self.next_retry_ts = 0.0
+
+    def can_try(self) -> bool:
+        return time.time() >= self.next_retry_ts
+
+    def success(self) -> None:
+        self.retry_count = 0
+        self.next_retry_ts = 0.0
+
+    def fail(self) -> int:
+        self.retry_count += 1
+        delay = min(self.base_sec * (2 ** (self.retry_count - 1)), self.max_sec)
+        jitter = random.uniform(0, delay * 0.10)
+        self.next_retry_ts = time.time() + delay + jitter
+        return int(delay + jitter)
+
+
+class CPUGovernor:
     @staticmethod
-    def get_current_governor():
-        # Read the current governor of the first CPU (assuming uniform setting across CPUs)
-        for gov_file in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'):
+    def governor_files() -> list[Path]:
+        return [Path(p) for p in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")]
+
+    @staticmethod
+    def available_governors_for(gov_file: Path) -> set[str]:
+        available_file = gov_file.with_name("scaling_available_governors")
+        try:
+            return set(available_file.read_text(encoding="utf-8").split())
+        except OSError:
+            return set(PREFERRED_GOVERNORS)
+
+    @classmethod
+    def current(cls) -> Optional[str]:
+        for gov_file in cls.governor_files():
             try:
-                with open(gov_file, 'r') as f:
-                    return f.read().strip()
-            except IOError:
+                return gov_file.read_text(encoding="utf-8").strip()
+            except OSError:
                 continue
         return None
-    @staticmethod
-    def choose_governor(current_governor, usage, cost, thresholds):
-        high_cost, mid_cost, low_cost = thresholds
-        # Determine desired governor based on smoothed usage and price.
-        if cost is None:
-            # If no price info, default to powersave (safe mode).
-            desired = 'powersave'
-        elif usage is None:
-            # If usage data is unavailable, keep current or default to powersave.
-            desired = current_governor or 'powersave'
+
+    @classmethod
+    def supported_governors(cls) -> set[str]:
+        supported: Optional[set[str]] = None
+        for gov_file in cls.governor_files():
+            available = cls.available_governors_for(gov_file)
+            supported = available if supported is None else supported.intersection(available)
+        return supported or set()
+
+    @classmethod
+    def closest_supported(cls, desired: str) -> Optional[str]:
+        supported = cls.supported_governors()
+        if not supported:
+            return desired
+        if desired in supported:
+            return desired
+        desired_priority = GOVERNOR_PRIORITY.get(desired, 0)
+        candidates = sorted(
+            (g for g in supported if g in GOVERNOR_PRIORITY),
+            key=lambda g: (abs(GOVERNOR_PRIORITY[g] - desired_priority), -GOVERNOR_PRIORITY[g]),
+        )
+        return candidates[0] if candidates else None
+
+    @classmethod
+    def set_all(cls, governor: str) -> bool:
+        target = cls.closest_supported(governor)
+        if not target:
+            logging.error("No supported CPU governors found.")
+            return False
+        if target != governor:
+            logging.info("Governor %r is unavailable; using closest supported governor %r.", governor, target)
+        files = cls.governor_files()
+        if not files:
+            logging.error("No scaling_governor files found. Is CPU frequency scaling available?")
+            return False
+        ok = True
+        for gov_file in files:
+            try:
+                gov_file.write_text(target, encoding="utf-8")
+            except OSError as exc:
+                logging.error("Failed to set %s to %r: %s", gov_file, target, exc)
+                ok = False
+        return ok
+
+
+def aggregate_usage(values: list[float], method: str) -> float:
+    if not values:
+        return 0.0
+    if method == "average":
+        return mean(values)
+    return median(values)
+
+
+def choose_governor(current: str, usage: Optional[float], cost: Optional[float], cfg: Config) -> str:
+    if cost is None:
+        desired = "powersave"
+    elif usage is None:
+        desired = current if current in GOVERNOR_PRIORITY else "powersave"
+    elif usage >= cfg.perf_enter_util and cost < cfg.low_cost:
+        desired = "performance"
+    elif usage >= 70 and cost < cfg.mid_cost:
+        desired = "schedutil"
+    elif usage <= cfg.psave_enter_util and cost > cfg.high_cost:
+        desired = "powersave"
+    elif usage <= 50 and cost >= cfg.mid_cost:
+        desired = "powersave"
+    elif usage < 70 and cost < cfg.mid_cost:
+        desired = "conservative"
+    else:
+        desired = "powersave"
+
+    if current == "performance" and desired != "performance" and usage is not None and usage >= cfg.perf_exit_util:
+        return "performance"
+    if current == "powersave" and desired != "powersave" and usage is not None and usage <= cfg.psave_exit_util:
+        return "powersave"
+    return desired
+
+
+def fetch_prices_if_needed(price_mgr: PriceManager, fetcher: PriceFetcher, cfg: Config, backoffs: dict[str, Backoff]) -> None:
+    now = datetime.now().astimezone()
+    dates_to_fetch = [now.date()]
+    if now.hour >= 13:
+        dates_to_fetch.append(now.date() + timedelta(days=1))
+
+    for day in dates_to_fetch:
+        api_date = day.strftime("%Y/%m-%d")
+        text_prefix = day.isoformat()
+        if price_mgr.has_data_for_date(text_prefix):
+            continue
+        backoff = backoffs.setdefault(text_prefix, Backoff())
+        if not backoff.can_try():
+            continue
+        data = fetcher.fetch(cfg.area, api_date)
+        if data:
+            rows = [(item["SEK_per_kWh"], item["time_start"], item["time_end"]) for item in data]
+            price_mgr.insert_bulk(rows)
+            backoff.success()
+            logging.info("Inserted %d electricity price rows for %s.", len(rows), text_prefix)
         else:
-            # Base decision (no hysteresis yet)
-            if usage >= PERF_ENTER_UTIL and cost < low_cost:
-                desired = 'performance'
-            elif usage >= 70 and cost < mid_cost:
-                # Moderately high usage, price is not too high
-                desired = 'schedutil'
-            elif usage <= PSAVE_ENTER_UTIL and cost > high_cost:
-                desired = 'powersave'
-            elif usage <= 50 and cost >= mid_cost:
-                # Low usage and at least mid-level cost
-                desired = 'powersave'
-            elif usage < 70 and cost < mid_cost:
-                # Moderate usage and low cost
-                desired = 'conservative'
-            else:
-                # Default to a conservative powersave approach if no condition matches
-                desired = 'powersave'
-        # Apply hysteresis: require extra margin to change state if currently at an extreme.
-        if current_governor == 'performance' and desired != 'performance':
-            if usage is not None and usage >= PERF_EXIT_UTIL:
-                desired = 'performance'  # Stay in performance until usage drops below PERF_EXIT_UTIL
-        if current_governor == 'powersave' and desired != 'powersave':
-            if usage is not None and usage <= PSAVE_EXIT_UTIL:
-                desired = 'powersave'  # Stay in powersave until usage rises above PSAVE_EXIT_UTIL
-        return desired
+            delay = backoff.fail()
+            logging.warning("Price fetch for %s failed; retry delayed by about %s seconds.", text_prefix, delay)
 
-def set_cpu_governor(governor):
-    """Attempt to set the CPU frequency governor for all CPU cores."""
-    success = True
-    for gov_file in glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'):
-        try:
-            with open(gov_file, 'w') as f:
-                f.write(governor)
-        except IOError as e:
-            success = False
-            print(f"[ERROR] Failed to set governor to '{governor}': {e}")
-            break
-    return success
 
-def main():
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    cfg = load_config(os.path.join(script_dir, 'powernap.conf'))
+def debug_dump(price_mgr: PriceManager, cpu_mgr: CPUManager) -> None:
+    print("Prices database:")
+    for row in price_mgr.execute("SELECT * FROM prices ORDER BY start_ts DESC"):
+        print(dict(row))
+    print("CPU usage database:")
+    for row in cpu_mgr.execute("SELECT * FROM cpu_usage ORDER BY timestamp_ts DESC"):
+        print(dict(row))
 
-    # Apply secure file permissions to config and database files (owner RW only)
+
+def setup_logging(level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def main() -> int:
+    script_dir = Path(__file__).resolve().parent
+    config_path = Path(os.environ.get("POWERNAP_CONFIG", script_dir / DEFAULT_CONFIG_NAME))
+
+    cfg_preview = load_config(config_path)
+    setup_logging(cfg_preview.log_level)
+    cfg = load_config(config_path)
+    secure_owner_rw(config_path)
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+
+    db_dir = Path(cfg.database_dir)
+    if not db_dir.is_absolute():
+        db_dir = script_dir / db_dir
+
+    price_mgr = PriceManager(db_dir / "prices.db")
+    cpu_mgr = CPUManager(db_dir / "cpu.db", psutil.cpu_count(logical=True) or 1)
+    fetcher = PriceFetcher(timeout_sec=cfg.request_timeout_sec)
+    backoffs: dict[str, Backoff] = {}
+
     try:
-        os.chmod(os.path.join(script_dir, 'powernap.conf'), 0o600)
-    except Exception:
-        pass
-    price_db_path = os.path.join(script_dir, 'prices.db')
-    cpu_db_path   = os.path.join(script_dir, 'cpu.db')
+        if "-debug" in sys.argv or "--debug" in sys.argv:
+            debug_dump(price_mgr, cpu_mgr)
+            return 0
 
-    price_mgr = PriceManager(price_db_path)
-    cpu_mgr   = CPUManager(cpu_db_path, psutil.cpu_count(logical=True) or 1)
-    # Lock down database files
-    try:
-        os.chmod(price_db_path, 0o600)
-        os.chmod(cpu_db_path, 0o600)
-    except Exception:
-        pass
+        current_governor = CPUGovernor.current() or "unknown"
+        smoothed_usage: Optional[float] = None
+        last_upscale_ts: Optional[float] = None
+        last_commit_bucket: Optional[int] = None
+        last_cleanup_date = datetime.now().date()
 
-    # Debug mode: output database contents and exit
-    if '-debug' in sys.argv:
-        prices = price_mgr.execute("SELECT * FROM prices")
-        print("Prices database:")
-        for row in prices:
-            print(dict(row))
-        print("CPU usage database:")
-        cpu_rows = cpu_mgr.execute("SELECT * FROM cpu_usage")
-        for row in cpu_rows:
-            print(dict(row))
-        return
+        logging.info("%s started. Current governor: %s", APP_NAME, current_governor)
 
-    current_governor = CPUMonitor.get_current_governor() or 'unknown'
-    thresholds = (cfg['HIGH_COST'], cfg['MID_COST'], cfg['LOW_COST'])
+        while not STOP_REQUESTED:
+            cycle_start = time.monotonic()
+            now = datetime.now().astimezone()
 
-    # Variables for API backoff and smoothing
-    next_price_fetch_time = datetime.now()
-    fetch_retry_count = 0
-    smoothed_usage = None
-    last_upscale_time = None
+            fetch_prices_if_needed(price_mgr, fetcher, cfg, backoffs)
+            current_price = price_mgr.get_current_price()
 
-    last_cleanup = datetime.now()
-    last_commit_minute = None
+            try:
+                usage_list = psutil.cpu_percent(interval=1, percpu=True)
+            except Exception as exc:
+                logging.error("psutil.cpu_percent failed: %s", exc)
+                usage_list = []
 
-    while True:
-        now = datetime.now()
-        now_iso = now.isoformat()
+            for cid, usage in enumerate(usage_list):
+                cpu_mgr.insert_temp(cid, usage)
 
-        # Retrieve current price or fetch if not available
-        current_price = price_mgr.get_current_price()
-        if current_price is None:
-            if now < next_price_fetch_time:
-                # Not yet time to retry fetching prices
-                pass
-            else:
-                date_str = now.strftime('%Y/%m-%d')
-                fetched = DataFetcher.fetch(cfg['AREA'], date_str)
-                if fetched:
-                    today_data = [(item['SEK_per_kWh'], item['time_start'], item['time_end']) for item in fetched]
-                    price_mgr.insert_bulk(today_data)
-                    print("[INFO] Inserted today's electricity prices.")
-                    # Reset backoff on success
-                    fetch_retry_count = 0
-                    next_price_fetch_time = now
-                else:
-                    # Apply exponential backoff for next retry
-                    fetch_retry_count += 1
-                    base_delay = min(60 * (2 ** fetch_retry_count), 3600)  # Cap backoff at 1 hour
-                    jitter = random.uniform(0, base_delay * 0.1)
-                    next_price_fetch_time = now + timedelta(seconds=(base_delay + jitter))
-                    print(f"[WARN] Price fetch failed, will retry in ~{int(base_delay)} seconds.")
-            # Attempt to pre-fetch tomorrow's prices after midday
-            if now.hour >= 13:
-                tomorrow_date = now.date() + timedelta(days=1)
-                tomorrow_str = tomorrow_date.strftime('%Y/%m-%d')
-                if not price_mgr.has_data_for_date(str(tomorrow_date)):
-                    fetched_t = DataFetcher.fetch(cfg['AREA'], tomorrow_str)
-                    if fetched_t:
-                        tdata = [(item['SEK_per_kWh'], item['time_start'], item['time_end']) for item in fetched_t]
-                        price_mgr.insert_bulk(tdata)
-                        print("[INFO] Inserted tomorrow's electricity prices.")
-        # Update current_price after any fetch attempt
-        current_price = price_mgr.get_current_price()
+            instantaneous_usage = aggregate_usage(usage_list, cfg.usage_method) if usage_list else None
+            if instantaneous_usage is not None:
+                smoothed_usage = instantaneous_usage if smoothed_usage is None else (
+                    cfg.smooth_factor * instantaneous_usage + (1 - cfg.smooth_factor) * smoothed_usage
+                )
 
-        # Sample CPU usage (all cores) and update smoothing
-        try:
-            usage_list = psutil.cpu_percent(interval=1, percpu=True)
-        except Exception as e:
-            print(f"[ERROR] psutil.cpu_percent failed: {e}")
-            usage_list = [0.0] * (psutil.cpu_count(logical=True) or 1)
-        overall_usage = max(usage_list) if usage_list else 0.0
-        # Initialize or update exponential moving average of CPU usage
-        if smoothed_usage is None:
-            smoothed_usage = overall_usage
-        else:
-            smoothed_usage = SMOOTH_FACTOR * overall_usage + (1 - SMOOTH_FACTOR) * smoothed_usage
+            desired_governor = choose_governor(current_governor, smoothed_usage, current_price, cfg)
+            desired_governor = CPUGovernor.closest_supported(desired_governor) or desired_governor
 
-        # Buffer per-core usage data for logging (not used in decision directly)
-        for cid, u in enumerate(usage_list):
-            cpu_mgr.insert_temp((now_iso, cpu_mgr.core_count, cid, u, current_governor))
+            if current_governor in GOVERNOR_PRIORITY and desired_governor in GOVERNOR_PRIORITY:
+                if GOVERNOR_PRIORITY[desired_governor] < GOVERNOR_PRIORITY[current_governor]:
+                    if last_upscale_ts and (time.time() - last_upscale_ts) < cfg.cooldown_sec:
+                        desired_governor = current_governor
+                elif GOVERNOR_PRIORITY[desired_governor] > GOVERNOR_PRIORITY[current_governor]:
+                    last_upscale_ts = time.time()
 
-        # Decide on appropriate governor using smoothed usage and current price
-        new_governor = CPUMonitor.choose_governor(current_governor, smoothed_usage, current_price, thresholds)
-        # Cooldown logic: prevent quick downscale after an upscale
-        if (current_governor in GOVERNOR_PRIORITY) and (new_governor in GOVERNOR_PRIORITY):
-            if GOVERNOR_PRIORITY[new_governor] < GOVERNOR_PRIORITY[current_governor]:
-                # Proposed a lower-performance governor than current (downscale)
-                if last_upscale_time and (datetime.now() - last_upscale_time).total_seconds() < COOLDOWN_SEC:
-                    new_governor = current_governor  # hold current governor during cooldown period
-            elif GOVERNOR_PRIORITY[new_governor] > GOVERNOR_PRIORITY[current_governor]:
-                # Upscaling: record time of this upscale
-                last_upscale_time = datetime.now()
+            if desired_governor and desired_governor != current_governor:
+                if CPUGovernor.set_all(desired_governor):
+                    logging.info(
+                        "Governor changed: %s -> %s | usage=%.1f%% | price=%s SEK/kWh",
+                        current_governor,
+                        desired_governor,
+                        smoothed_usage if smoothed_usage is not None else -1,
+                        f"{current_price:.3f}" if current_price is not None else "unknown",
+                    )
+                    current_governor = desired_governor
 
-        # Apply the governor change if needed
-        if new_governor and new_governor != current_governor:
-            if set_cpu_governor(new_governor):
-                print(f"[INFO] Governor changed from {current_governor} to {new_governor}")
-                current_governor = new_governor
-
-        # Periodically commit usage data to the database
-        if cfg['COMMIT_INTERVAL'] > 0:
-            minute = now.minute
-            if minute % cfg['COMMIT_INTERVAL'] == 0:
-                if last_commit_minute != minute:
+            if cfg.commit_interval_minutes > 0:
+                bucket = int(now.timestamp() // (cfg.commit_interval_minutes * 60))
+                if bucket != last_commit_bucket:
                     cpu_mgr.commit_data(current_governor)
-                    last_commit_minute = minute
+                    last_commit_bucket = bucket
 
-        # Periodically clean up old data from databases
-        if cfg['DATA_RETENTION_ENABLED']:
-            if (datetime.now() - last_cleanup).days >= cfg['DATA_RETENTION_DAYS']:
-                price_mgr.remove_old_data(cfg['DATA_RETENTION_DAYS'])
-                cpu_mgr.remove_old_data(cfg['DATA_RETENTION_DAYS'])
-                last_cleanup = datetime.now()
-                print(f"[INFO] Purged data older than {cfg['DATA_RETENTION_DAYS']} days.")
+            if cfg.data_retention_enabled and now.date() != last_cleanup_date:
+                price_mgr.remove_old_data(cfg.data_retention_days)
+                cpu_mgr.remove_old_data(cfg.data_retention_days)
+                last_cleanup_date = now.date()
+                logging.info("Purged data older than %d days.", cfg.data_retention_days)
 
-        # Sleep until next monitoring cycle
-        time.sleep(cfg['SLEEP_INTERVAL'])
+            elapsed = time.monotonic() - cycle_start
+            sleep_for = max(0.1, cfg.sleep_interval - elapsed)
+            time.sleep(sleep_for)
+
+        cpu_mgr.commit_data(current_governor)
+        logging.info("%s stopped cleanly.", APP_NAME)
+        return 0
+    finally:
+        price_mgr.close()
+        cpu_mgr.close()
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
