@@ -1,3 +1,2 @@
-requests 
-psutil 
-prettytable
+requests
+psutil
