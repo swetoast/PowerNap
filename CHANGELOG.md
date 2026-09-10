@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.6
+
+- Recorded successful real-hardware dry-run validation on an ARM platform using the `cpufreq-dt` driver.
+- Validated one shared CPUFreq policy covering online CPUs 0 through 3 with ten advertised steps from 1500000 to 2400000 kHz.
+- Confirmed high-load and warm-temperature behavior selected the responsive profile despite an expensive electricity-price interval.
+- Confirmed the responsive target snapped to the advertised 2300000 kHz step.
+- Confirmed safe downscale ordering planned the `schedutil` governor before the lower maximum-frequency ceiling.
+- Confirmed dry-run isolation retained the `performance` governor and 2400000 kHz maximum.
+- Confirmed no GPU, EPP, or power-cap operations were planned on unsupported hardware.
+- No control-code change was required after the ARM validation result.
+
 ## 0.11.5
 
 - Added discovery of driver-advertised CPU frequency steps from `scaling_available_frequencies`.

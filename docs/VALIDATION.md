@@ -92,6 +92,28 @@ CPU frequency-step handling:
 - Drivers without an advertised frequency table retain bounded continuous targets.
 - Readback remains exact because the requested value is selected from the driver-supported table when one is available.
 
+## ARM cpufreq-dt dry-run validation
+
+A second real-hardware host validated the portable CPUFreq path:
+
+- ARM vendor identifier `0x41`
+- Five logical and five physical CPUs reported, with CPUs 0 through 3 online
+- One shared `cpufreq-dt` policy covering online CPUs 0 through 3
+- Supported governors: conservative, ondemand, userspace, powersave, performance, and schedutil
+- Ten advertised frequency steps from 1500000 to 2400000 kHz in 100000 kHz increments
+- No EPP, power-cap, NVIDIA, AMDGPU, or Intel GPU controls
+
+The host was under 99.25 percent average CPU load with a 100 percent peak, a 1.916 load ratio, and a 61.7 C CPU temperature. The current electricity price was 2.02864 SEK/kWh with a 0.9789 current rank. PowerNap selected the responsive profile because maximum demand was constrained by the warm thermal ceiling.
+
+The dry-run plan contained exactly two operations for the shared policy:
+
+1. Change the governor from `performance` to `schedutil`.
+2. Lower the maximum frequency from 2400000 to the advertised 2300000 kHz step.
+
+Both operations were simulated. The governor remained `performance`, the maximum remained 2400000 kHz, and no unsupported hardware operations were planned. This validates shared-policy handling, discrete-step selection, high-load decision behavior, warm thermal limiting, safe downscale ordering, and dry-run isolation on this `cpufreq-dt` host.
+
+The reported fifth CPU was not online and was not included in a CPUFreq policy. PowerNap correctly planned control only for the discovered policy. Possible, present, online, and offline CPU topology has not yet been separately recorded. Sustained-load history over multiple daemon cycles also remains unverified on this host.
+
 ## Not yet verified
 
 - EPP writes because the interface is unavailable on this host
