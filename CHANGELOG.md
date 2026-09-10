@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.7
+
+- Made Linux CPU sysfs topology authoritative for logical and physical CPU discovery.
+- Added automatic parsing of `present`, `possible`, and `online` CPU-list ranges.
+- Counted physical cores from unique `(physical_package_id, core_id)` pairs, supporting SMT, multiple packages, and non-contiguous core IDs.
+- Preserved `/proc/cpuinfo` as a fallback only when kernel sysfs CPU inventory is unavailable.
+- Returned an unknown physical-core count instead of inventing one when sysfs topology is incomplete.
+- Restricted DRM discovery to physical `cardN` nodes so display connectors are never treated as GPUs.
+- Confirmed enabled GPU configuration does not create hardware or control operations when no supported GPU is discovered.
+- Added ARM, x86 SMT, multi-package, offline-CPU, incomplete-topology, no-GPU, and DRM-connector regression coverage.
+- Updated automated regression coverage from 123 to 134 tests.
+
 ## 0.11.6
 
 - Recorded successful real-hardware dry-run validation on an ARM platform using the `cpufreq-dt` driver.

@@ -126,6 +126,22 @@ def _cpu_list(value: str | None) -> tuple[int, ...]:
     return tuple(dict.fromkeys(cpus))
 
 
+def _sysfs_cpu_ids(cpu_root: Path, name: str) -> tuple[int, ...]:
+    return _cpu_list(read_text(cpu_root / name))
+
+
+def _sysfs_physical_cores(cpu_root: Path, present: tuple[int, ...]) -> int | None:
+    core_keys: set[tuple[int, int]] = set()
+    for cpu in present:
+        topology = cpu_root / f"cpu{cpu}" / "topology"
+        package_id = read_int(topology / "physical_package_id")
+        core_id = read_int(topology / "core_id")
+        if package_id is None or core_id is None:
+            return None
+        core_keys.add((package_id, core_id))
+    return len(core_keys) if core_keys else None
+
+
 def discover_cpu_info(root: Path = Path("/sys"), proc_root: Path = Path("/proc")) -> CPUInfo:
     cpuinfo = read_text(proc_root / "cpuinfo") or ""
     blocks = [block for block in cpuinfo.split("\n\n") if block.strip()]
@@ -140,15 +156,24 @@ def discover_cpu_info(root: Path = Path("/sys"), proc_root: Path = Path("/proc")
     first = records[0] if records else {}
     vendor = first.get("vendor_id") or first.get("CPU implementer") or first.get("Hardware")
     model = first.get("model name") or first.get("Processor") or first.get("Hardware")
-    online = _cpu_list(read_text(root / "devices/system/cpu/online"))
+
+    cpu_root = root / "devices/system/cpu"
+    present = _sysfs_cpu_ids(cpu_root, "present") or _sysfs_cpu_ids(cpu_root, "possible")
+    online = _sysfs_cpu_ids(cpu_root, "online")
     if not online:
-        online = tuple(range(len(records)))
-    core_keys = {
-        (record.get("physical id", "0"), record.get("core id", record.get("processor", str(index))))
-        for index, record in enumerate(records)
-    }
-    physical = len(core_keys) if records else None
-    return CPUInfo(vendor, model, len(records), physical, online)
+        online = present or tuple(range(len(records)))
+
+    if present:
+        logical = len(present)
+        physical = _sysfs_physical_cores(cpu_root, present)
+    else:
+        logical = len(records)
+        core_keys = {
+            (record.get("physical id", "0"), record.get("core id", record.get("processor", str(index))))
+            for index, record in enumerate(records)
+        }
+        physical = len(core_keys) if records else None
+    return CPUInfo(vendor, model, logical, physical, online)
 
 def discover_cpu(root: Path = Path("/sys")) -> tuple[CPUFreqPolicy, ...]:
     paths = list((root / "devices/system/cpu/cpufreq").glob("policy*"))
@@ -248,7 +273,7 @@ def discover_nvidia() -> tuple[NvidiaGPU, ...]:
 def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
     result = []
     seen_devices: set[str] = set()
-    for card in sorted((root / "class/drm").glob("card[0-9]*")):
+    for card in sorted(path for path in (root / "class/drm").glob("card*") if path.name[4:].isdigit()):
         device = card / "device"
         if read_text(device / "vendor") != "0x1002":
             continue
@@ -281,7 +306,7 @@ def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
 def discover_intel(root: Path = Path("/sys")) -> tuple[IntelGPU, ...]:
     result = []
     seen: set[str] = set()
-    for card in sorted((root / "class/drm").glob("card[0-9]*")):
+    for card in sorted(path for path in (root / "class/drm").glob("card*") if path.name[4:].isdigit()):
         device = card / "device"
         if read_text(device / "vendor") != "0x8086":
             continue

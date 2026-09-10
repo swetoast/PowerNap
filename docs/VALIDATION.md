@@ -3,7 +3,7 @@
 ## Automated checks completed
 
 - Python bytecode compilation for every package module
-- 123 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
+- 134 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
 - Measured 83.90 percent branch coverage with a 70 percent CI minimum
 - Clean virtual-environment installation and console entry-point smoke test
 - One-shot installed-package dry-run with JSON validation
@@ -113,6 +113,18 @@ The dry-run plan contained exactly two operations for the shared policy:
 Both operations were simulated. The governor remained `performance`, the maximum remained 2400000 kHz, and no unsupported hardware operations were planned. This validates shared-policy handling, discrete-step selection, high-load decision behavior, warm thermal limiting, safe downscale ordering, and dry-run isolation on this `cpufreq-dt` host.
 
 The reported fifth CPU was not online and was not included in a CPUFreq policy. PowerNap correctly planned control only for the discovered policy. Possible, present, online, and offline CPU topology has not yet been separately recorded. Sustained-load history over multiple daemon cycles also remains unverified on this host.
+
+## Automatic CPU and GPU inventory validation
+
+PowerNap now treats Linux sysfs as the authoritative CPU inventory. Logical CPUs come from `/sys/devices/system/cpu/present`, with `possible` as a fallback. Online CPUs remain a separate inventory. Physical cores are counted from unique `(physical_package_id, core_id)` pairs for present CPUs.
+
+The ARM validation host reports CPUs 0 through 3 as possible, present, and online, with four unique core IDs in package 0. PowerNap therefore reports four logical CPUs and four physical cores even if `/proc/cpuinfo` contains an inconsistent extra processor record.
+
+The x86 validation topology demonstrated SMT and non-contiguous core IDs. Eight logical CPUs mapped to six unique physical cores through pairs `(0,0)`, `(0,4)`, `(0,12)`, `(0,13)`, `(0,14)`, and `(0,15)`. This validates that PowerNap does not divide logical counts by two or infer core counts from the highest ID.
+
+GPU discovery remains hardware-driven and vendor-specific. The NAS exposes one NVIDIA GTX TITAN X at PCI address `0000:01:00.0`, one DRM card node, one render node, and several display connectors. PowerNap ignores connector names, deduplicates physical DRM devices, and discovers NVIDIA hardware through NVML. The ARM host exposes no supported GPU and correctly produces empty NVIDIA, AMDGPU, and Intel GPU inventories with no GPU control plan.
+
+Configuration flags permit management only when matching hardware is discovered. They never create assumed GPU devices.
 
 ## Not yet verified
 
