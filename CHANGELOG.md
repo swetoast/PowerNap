@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.8
+
+- Added first-class aggregate transaction state to status and report output.
+- Added status schema version 1, applied profile, requested profile, and yielded-target reporting.
+- Added full daemon-cycle tests proving verified success commits a physical transition and required failure does not.
+- Added applied-profile reconstruction from the verified current control state.
+- Added persistent external-change events for observe, yield, and manage policies.
+- Added persistent yielded-target status.
+- Added per-target exponential control retry backoff with reset after successful verification.
+- Added database write retry backoff and automatic recovery-state clearing.
+- Raised daemon branch coverage from 34 percent to 79 percent.
+- Expanded the regression suite to 97 tests.
+- Raised measured branch coverage to 79.80 percent while retaining the 70 percent CI floor.
+
 ## 0.9.7
 
 - Added direction-aware global ordering across CPU policy operations so all frequency ceilings rise before policy changes and all policy changes precede frequency reductions.

@@ -48,6 +48,13 @@ class Repository:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts_ms INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_ms);
             CREATE TABLE IF NOT EXISTS capabilities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts_ms INTEGER NOT NULL,
@@ -173,6 +180,13 @@ class Repository:
         with self.conn:
             self.conn.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", (key, json.dumps(value)))
 
+    def record_event(self, event_type: str, payload: dict) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO events(ts_ms,event_type,payload) VALUES(?,?,?)",
+                (time.time_ns() // 1_000_000, event_type, json.dumps(payload, default=str)),
+            )
+
     def get_meta(self, key: str, default=None):
         row = self.conn.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return json.loads(row[0]) if row else default
@@ -199,6 +213,13 @@ class Repository:
             "controls": [dict(row) for row in self.conn.execute(
                 "SELECT ts_ms,adapter,target,result FROM controls ORDER BY id DESC LIMIT ?", (limit,)
             )],
+            "events": [dict(row) | {"payload": json.loads(row["payload"])} for row in self.conn.execute(
+                "SELECT ts_ms,event_type,payload FROM events ORDER BY id DESC LIMIT ?", (limit,)
+            )],
+            "status_schema": 1,
+            "transaction": self.get_meta("last_transaction"),
+            "applied_profile": self.get_meta("applied_profile"),
+            "yielded_targets": self.get_meta("yielded_targets", []),
         }
 
     def close(self) -> None:

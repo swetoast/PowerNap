@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from typing import Mapping
 
 from .capabilities import Capabilities, CPUFreqPolicy, read_text
@@ -44,6 +45,8 @@ class Controller:
         self.manage_amdgpu = manage_amdgpu
         self.manage_powercap = manage_powercap
         self.yielded_targets: set[str] = set()
+        self.retry_not_before: dict[str, float] = {}
+        self.failure_counts: dict[str, int] = {}
         self.expected_state = self.snapshot()
 
     def snapshot(self) -> dict[str, str | float | None]:
@@ -118,7 +121,12 @@ class Controller:
             operations.extend(self._nvidia_plan(profile))
         if self.manage_amdgpu:
             operations.extend(self._amd_plan(profile))
-        filtered = [operation for operation in operations if self.operation_key(operation) not in self.yielded_targets]
+        now = time.monotonic()
+        filtered = [
+            operation for operation in operations
+            if self.operation_key(operation) not in self.yielded_targets
+            and self.retry_not_before.get(self.operation_key(operation), 0.0) <= now
+        ]
         return self._order_operations(filtered, profile)
 
     @staticmethod
@@ -234,14 +242,35 @@ class Controller:
         for operation in operations:
             result = self._apply(operation)
             results.append(result)
+            key = self.operation_key(operation)
             if result.state == ResultState.APPLIED:
                 applied.append(result)
                 self._remember(result)
-            elif result.state == ResultState.FAILED and operation.required:
+                self.failure_counts.pop(key, None)
+                self.retry_not_before.pop(key, None)
+            elif result.state == ResultState.FAILED:
+                failures = self.failure_counts.get(key, 0) + 1
+                self.failure_counts[key] = failures
+                self.retry_not_before[key] = time.monotonic() + min(300.0, 5.0 * (2 ** (failures - 1)))
+            if result.state == ResultState.FAILED and operation.required:
                 rollback = self._rollback(applied)
                 results.extend(rollback)
                 break
         return results
+
+    def infer_applied_profile(self) -> Profile | None:
+        if not self.expected_state:
+            return None
+        yielded = self.yielded_targets
+        retry = self.retry_not_before
+        self.yielded_targets = set()
+        self.retry_not_before = {}
+        try:
+            matches = [profile for profile in Profile if not self.plan(profile)]
+        finally:
+            self.yielded_targets = yielded
+            self.retry_not_before = retry
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def transaction_summary(results: list[OperationResult]) -> dict:

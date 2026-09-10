@@ -50,6 +50,35 @@ class Daemon:
         self.needs_reconcile = True
         self.degraded_reason: str | None = None
         self.last_cycle_monotonic: float | None = None
+        self.database_failure_count = 0
+        self.database_retry_not_before = 0.0
+
+    def _repository_write(self, action, *args) -> bool:
+        now = time.monotonic()
+        if now < self.database_retry_not_before:
+            return False
+        try:
+            action(*args)
+        except Exception as exc:
+            self.database_failure_count += 1
+            delay = min(300.0, 5.0 * (2 ** (self.database_failure_count - 1)))
+            self.database_retry_not_before = now + delay
+            self.degraded_reason = "database unavailable"
+            logging.error("Database write failed; retry in %.1f seconds: %s", delay, exc)
+            return False
+        self.database_failure_count = 0
+        self.database_retry_not_before = 0.0
+        if self.degraded_reason == "database unavailable":
+            self.degraded_reason = None
+        return True
+
+    def _record_external_event(self, policy: str, changes: dict) -> None:
+        repository = getattr(self, "repository", None)
+        if repository is None:
+            return
+        payload = {"policy": policy, "targets": sorted(changes), "changes": changes}
+        self._repository_write(repository.record_event, "external_change", payload)
+        self._repository_write(repository.set_meta, "yielded_targets", sorted(self.controller.yielded_targets))
 
     def request_stop(self, *_args) -> None:
         self.stop_requested = True
@@ -61,12 +90,15 @@ class Daemon:
         if self.cfg.external_change_policy == "observe":
             self.controller.expected_state = self.controller.snapshot()
             logging.info("Accepted %d externally changed power settings", len(changes))
+            self._record_external_event("observe", changes)
             return False
         elif self.cfg.external_change_policy == "yield":
             self.controller.yield_targets(changes)
             logging.warning("External power setting change detected; yielded %d affected controls", len(changes))
+            self._record_external_event("yield", changes)
             return False
         logging.warning("External power setting change detected; selected profile will be reapplied")
+        self._record_external_event("manage", changes)
         return True
 
     def _protect_workload(self, decision):
@@ -124,16 +156,15 @@ class Daemon:
                                 self.degraded_reason = None
                     else:
                         self.degraded_reason = "required control verification failed"
-                try:
-                    self.repository.record_cycle(state, decision, results)
-                    self.repository.set_meta("transition_state", self.transition.export_state())
-                    self.repository.set_meta("simulated_transition_state", self.simulated_transition.export_state())
-                    self.repository.set_meta("last_transaction", transaction)
-                    if self.degraded_reason == "database unavailable":
-                        self.degraded_reason = None
-                except RuntimeError as exc:
-                    self.degraded_reason = "database unavailable"
-                    logging.error("%s", exc)
+                applied = self.controller.infer_applied_profile() if not self.cfg.dry_run else self.simulated_transition.current
+                transaction["applied_profile"] = applied.name.lower() if applied is not None else None
+                transaction["requested_profile"] = target_profile.name.lower() if "target_profile" in locals() else transition.current.name.lower()
+                transaction["yielded_targets"] = sorted(self.controller.yielded_targets)
+                self._repository_write(self.repository.record_cycle, state, decision, results)
+                self._repository_write(self.repository.set_meta, "transition_state", self.transition.export_state())
+                self._repository_write(self.repository.set_meta, "simulated_transition_state", self.simulated_transition.export_state())
+                self._repository_write(self.repository.set_meta, "last_transaction", transaction)
+                self._repository_write(self.repository.set_meta, "applied_profile", transaction["applied_profile"])
                 cycles += 1
                 if time.time() - last_prune >= 86_400:
                     try:

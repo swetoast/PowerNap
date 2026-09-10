@@ -206,3 +206,28 @@ def test_powercap_only_selects_one_named_long_term_constraint(tmp_path):
     ))
     plan = Controller(Capabilities(powercap_zones=(zone,)), True, False, False, False, True).plan(Profile.ECO)
     assert [item.target for item in plan] == [str(long)]
+
+
+def test_failed_target_enters_exponential_retry_backoff(tmp_path, monkeypatch):
+    target = tmp_path / "missing" / "value"
+    clock = iter((100.0, 100.0, 103.0, 106.0))
+    monkeypatch.setattr("powernap.control.time.monotonic", lambda: next(clock))
+    ctl = Controller(Capabilities(), False, False, False, False)
+    operation = ControlOperation("file", str(target), None, "new")
+    result = ctl.apply_transaction([operation])
+    assert result[0].state == ResultState.FAILED
+    assert ctl.retry_not_before[str(target)] == 105.0
+    ctl.capabilities = Capabilities()
+    assert ctl.retry_not_before[str(target)] > 103.0
+
+
+def test_success_clears_target_retry_backoff(tmp_path):
+    target = tmp_path / "value"
+    target.write_text("old")
+    ctl = Controller(Capabilities(), False, False, False, False)
+    ctl.failure_counts[str(target)] = 2
+    ctl.retry_not_before[str(target)] = 999999999.0
+    result = ctl.apply_transaction([ControlOperation("file", str(target), "old", "new")])
+    assert result[0].state == ResultState.APPLIED
+    assert str(target) not in ctl.failure_counts
+    assert str(target) not in ctl.retry_not_before

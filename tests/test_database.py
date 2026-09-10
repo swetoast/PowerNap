@@ -72,3 +72,18 @@ def test_price_intervals_round_trip(tmp_path):
     assert rows[0]["sek_kwh"] == 1.25
     assert rows[0]["provider"] == "test"
     r.close()
+
+
+def test_report_exposes_transaction_profile_events_and_schema(tmp_path):
+    r = Repository(tmp_path / "status.db")
+    r.set_meta("last_transaction", {"state": "partially_applied"})
+    r.set_meta("applied_profile", "balanced")
+    r.set_meta("yielded_targets", ["/sys/example"])
+    r.record_event("external_change", {"policy": "yield", "targets": ["/sys/example"]})
+    report = r.report()
+    assert report["status_schema"] == 1
+    assert report["transaction"]["state"] == "partially_applied"
+    assert report["applied_profile"] == "balanced"
+    assert report["yielded_targets"] == ["/sys/example"]
+    assert report["events"][0]["event_type"] == "external_change"
+    r.close()
