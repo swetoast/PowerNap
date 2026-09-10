@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.8
+
+- Keep an idle GPU in Eco even when missing price data makes the CPU prefer Balanced.
+- Preserve independent CPU and GPU recommendations instead of allowing CPU or price preference to promote an idle GPU.
+- Add regression coverage for idle GPUs, active CPUs with idle GPUs, all GPU activity signals, thermal limits, and multiple GPUs.
+
 ## 0.11.7
 
 - Made Linux CPU sysfs topology authoritative for logical and physical CPU discovery.

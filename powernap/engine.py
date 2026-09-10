@@ -104,7 +104,11 @@ class DecisionEngine:
         thermal = max((cpu_thermal, gpu_thermal), key=lambda item: severity[item])
         cpu_recommended = Profile(min(max(int(preference), int(floor)), int(cpu_ceiling)))
         gpu_floor = Profile.RESPONSIVE if gpu_score >= 35 else Profile.BALANCED if gpu_score >= 15 else Profile.ECO
-        gpu_recommended = Profile(min(max(int(preference), int(gpu_floor)), int(gpu_ceiling)))
+        # Price preference may make active GPU work more responsive, but it must not
+        # promote an idle GPU. GPU demand remains the minimum authority required to
+        # leave Eco, independently of the CPU recommendation.
+        gpu_preference = Profile.ECO if gpu_floor == Profile.ECO else preference
+        gpu_recommended = Profile(min(max(int(gpu_preference), int(gpu_floor)), int(gpu_ceiling)))
         recommended = min(cpu_recommended, gpu_recommended) if state.gpus else cpu_recommended
         if thermal == ThermalState.CRITICAL:
             reason = "Thermal Protect requires Eco immediately."

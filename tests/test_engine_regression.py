@@ -123,3 +123,45 @@ def test_missing_gpu_temperature_does_not_reduce_known_cpu_ceiling():
     assert result.gpu_thermal_state == ThermalState.UNKNOWN
     assert result.gpu_safety_ceiling == Profile.MAXIMUM
     assert result.safety_ceiling == Profile.MAXIMUM
+
+
+def test_idle_gpu_remains_eco_when_cpu_is_balanced():
+    gpu = GPUState("gpu", "nvidia", utilization=0, memory_utilization=0, encoder_utilization=0, decoder_utilization=0, temperature_c=34)
+    result = DecisionEngine(Config()).decide(state(2, gpu))
+    assert result.cpu_recommended == Profile.BALANCED
+    assert result.gpu_score == 0
+    assert result.gpu_recommended == Profile.ECO
+
+
+def test_active_cpu_does_not_promote_idle_gpu():
+    gpu = GPUState("gpu", "nvidia", utilization=0, memory_utilization=0, encoder_utilization=0, decoder_utilization=0, temperature_c=34)
+    cpu = CPUState(average=60, peak=90, busy_ratio=0.5, iowait=0, load_1m_ratio=0.5, sustained_ratio=0.5, temperature_c=40, temperature_source="cpu")
+    result = DecisionEngine(Config()).decide(SystemState("now", 1, cpu, (gpu,), PriceContext()))
+    assert result.cpu_recommended >= Profile.RESPONSIVE
+    assert result.gpu_recommended == Profile.ECO
+
+
+def test_each_gpu_activity_signal_can_promote_gpu():
+    signals = ("utilization", "memory_utilization", "encoder_utilization", "decoder_utilization")
+    for signal in signals:
+        values = dict(utilization=0, memory_utilization=0, encoder_utilization=0, decoder_utilization=0)
+        values[signal] = 20
+        gpu = GPUState("gpu", "nvidia", temperature_c=40, **values)
+        result = DecisionEngine(Config()).decide(state(0, gpu))
+        assert result.gpu_recommended == Profile.BALANCED, signal
+
+
+def test_hot_idle_gpu_is_never_promoted_above_eco():
+    gpu = GPUState("gpu", "nvidia", utilization=0, memory_utilization=0, encoder_utilization=0, decoder_utilization=0, temperature_c=85)
+    result = DecisionEngine(Config()).decide(state(40, gpu))
+    assert result.gpu_thermal_state == ThermalState.HOT
+    assert result.gpu_recommended == Profile.ECO
+
+
+def test_multiple_gpus_use_highest_observed_demand():
+    idle = GPUState("idle", "nvidia", utilization=0, temperature_c=35)
+    busy = GPUState("busy", "nvidia", utilization=40, temperature_c=50)
+    cpu = CPUState(average=0, peak=0, busy_ratio=0, iowait=0, load_1m_ratio=0, sustained_ratio=0, temperature_c=40, temperature_source="cpu")
+    result = DecisionEngine(Config()).decide(SystemState("now", 0, cpu, (idle, busy), PriceContext()))
+    assert result.gpu_score == 40
+    assert result.gpu_recommended == Profile.RESPONSIVE

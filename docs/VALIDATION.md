@@ -144,3 +144,7 @@ The supplied configuration remains in dry-run mode. Physical control must be val
 ## Privilege boundary
 
 The current deployment remains a hardened root service because the supported sysfs controls require elevated local write access and a separate privileged helper has not yet completed real-hardware validation. The service unit restricts privileges, writable paths, address families, kernel access, home access, temporary files, executable memory, and restart behavior. A helper will not be introduced until its typed operation protocol, canonical path validation, bounds enforcement, readback, rollback, and hardware tests are complete.
+
+## Independent idle GPU validation
+
+Version 0.11.8 adds regression checks that keep a zero-demand GPU in Eco while allowing the CPU to select Balanced or Responsive independently. GPU utilization, memory, encoder, and decoder activity can still promote the GPU, while thermal ceilings remain authoritative.
