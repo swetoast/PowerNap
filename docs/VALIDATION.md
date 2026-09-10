@@ -32,7 +32,16 @@ Verified CPU governor transaction on policy0:
 4. Restored the original governor `ondemand`.
 5. Read back `ondemand` successfully.
 
-This verifies one bounded CPUFreq governor write, readback, and restoration path on this specific host. It does not by itself validate all twelve policies, frequency-ceiling writes, service-driven application, restart restoration, or other CPUFreq drivers.
+A second transaction validated all twelve CPUFreq policies together:
+
+1. Captured every policy's original governor and maximum-frequency ceiling.
+2. Applied the advertised `schedutil` governor to all twelve policies.
+3. Applied a bounded 2000000 kHz maximum-frequency ceiling to all twelve policies.
+4. Read back and verified both values on every policy.
+5. Restored every captured governor and maximum-frequency ceiling.
+6. Read back and verified complete restoration on every policy.
+
+This verifies governor and maximum-frequency writes, readback, and restoration across all twelve `acpi-cpufreq` policies on this specific host. It does not validate other CPUFreq drivers, boost writes, service-driven application, suspend/resume, or reboot behavior.
 
 Additional read-only hardware evidence:
 
@@ -45,8 +54,6 @@ Additional read-only hardware evidence:
 
 ## Not yet verified
 
-- CPU frequency-ceiling write, readback, and restoration
-- Governor application and restoration across all twelve CPUFreq policies
 - EPP writes because the interface is unavailable on this host
 - RAPL writes because no trustworthy minimum bound was discovered
 - NVIDIA power-limit writes and restoration

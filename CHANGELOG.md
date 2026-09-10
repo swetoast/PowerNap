@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.2
+
+- Completed real-hardware CPUFreq validation across all twelve policies on the Ubuntu 22.04.5 target.
+- Applied the advertised schedutil governor to every policy and verified every readback.
+- Applied a bounded 2000000 kHz maximum-frequency ceiling to every policy and verified every readback.
+- Restored each policy's captured original governor and maximum-frequency ceiling.
+- Verified restoration independently on every policy.
+- Kept boost, RAPL, and NVIDIA controls unchanged during the CPUFreq transaction.
+- Kept dry-run enabled and power-cap control disabled by default.
+
 ## 0.11.1
 
 - Recorded the first real-hardware CPUFreq validation on Ubuntu 22.04.5 with an Intel Core i5-12400 and the acpi-cpufreq driver.
