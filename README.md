@@ -4,7 +4,7 @@ PowerNap is a local, capability-aware Linux power-management daemon. It balances
 
 PowerNap is profile-centric rather than governor-centric. It selects an abstract operating profile, then maps that profile to the controls the current system actually supports. A machine may use CPUFreq governors and frequency ceilings, another may expose energy-performance preferences, and a GPU may provide a bounded power limit. Unsupported controls are reported and skipped instead of guessed.
 
-> **Project status:** PowerNap 0.11.2 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. CPU governor and frequency-ceiling writes, readback, and restoration have been validated across all twelve policies on one supported acpi-cpufreq host. Other physical control paths remain under validation.
+> **Project status:** PowerNap 0.11.3 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. CPU governor and frequency-ceiling writes across all twelve acpi-cpufreq policies, plus NVIDIA power-limit write, readback, and restoration through NVML, have been validated on the target Ubuntu host. Other physical control paths remain under validation.
 
 ## Table of contents
 
@@ -189,15 +189,14 @@ Dry-run output must be reviewed on every target computer before physical control
 ### Clone and create a virtual environment
 
 ```bash
-git clone https://github.com/OWNER/powernap.git
-cd powernap
+git clone https://github.com/swetoast/PowerNap.git
+cd PowerNap
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[test,nvidia]'
 ```
 
-Replace `OWNER` with the final GitHub organization or username.
 
 If the system has no NVIDIA GPU, the optional NVIDIA dependency can be omitted:
 
@@ -499,6 +498,6 @@ PowerNap can run with privileges capable of changing hardware power settings. Re
 
 ## License
 
-No open-source license has been selected in this package. Until a license is added by the repository owner, normal copyright restrictions apply and the repository should not claim that reuse, modification, or redistribution is permitted.
+PowerNap is licensed under the [GNU General Public License v3.0](LICENSE). You may use, study, modify, and redistribute the software under the terms of that license.
 
-Before publishing the repository as open source, choose an appropriate license and add it as `LICENSE` in the project root.
+The project repository is [swetoast/PowerNap](https://github.com/swetoast/PowerNap). Issues and source history are maintained there.

@@ -1,6 +1,6 @@
 [Unit]
 Description=PowerNap Linux power profile manager
-Documentation=https://github.com/OWNER/powernap
+Documentation=https://github.com/swetoast/PowerNap
 Wants=network-online.target
 After=network-online.target
 ConditionPathExists=/etc/powernap/powernap.conf

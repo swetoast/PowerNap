@@ -49,14 +49,36 @@ Additional read-only hardware evidence:
 - Boost is exposed at `/sys/devices/system/cpu/cpufreq/boost` and is enabled.
 - EPP is not exposed with the active `acpi-cpufreq` configuration and is treated as unsupported.
 - Package RAPL long-term constraint is present at 65000000 microwatts and root-writable, but no reliable minimum bound was exposed. RAPL control therefore remains disabled.
-- NVIDIA NVML reports a 150 to 275 W supported power-limit range, with a current limit of 150 W and default limit of 250 W. NVIDIA physical writes remain unverified.
+- NVIDIA NVML reports a 150 to 275 W supported power-limit range, with an original limit of 150 W and default limit of 250 W.
+
+Verified NVIDIA power-limit transaction:
+
+1. Addressed the GPU by stable UUID `GPU-c21e48a9-7b9c-8e89-6124-4522385de720`.
+2. Captured the original 150.00 W power limit.
+3. Confirmed the driver-reported 150.00 to 275.00 W supported range.
+4. Applied a bounded 175.00 W power limit.
+5. Read back and verified the 175.00 W applied value.
+6. Restored the exact original 150.00 W power limit.
+7. Read back and verified the restored 150.00 W value.
+
+Post-restoration health evidence:
+
+- Driver remained healthy at version 580.178.04.
+- GPU identity and UUID were unchanged.
+- Persistence mode remained enabled.
+- Performance state returned to P8.
+- GPU and memory utilization were both 0 percent.
+- Temperature was 35 C and instantaneous power draw was 16.12 W.
+- Current and requested power limits were both restored to 150.00 W.
+- No software power-cap, hardware slowdown, thermal slowdown, power braking, PCIe replay, or recovery condition was reported.
+
+This verifies NVIDIA NVML power-limit write, readback, restoration, and immediate post-test health on the GTX TITAN X with driver 580.178.04. It does not validate other NVIDIA models or drivers, sustained-load behavior, service-driven application, suspend/resume, or reboot persistence.
 - No AMDGPU or active Intel GPU was present on the validation host.
 
 ## Not yet verified
 
 - EPP writes because the interface is unavailable on this host
 - RAPL writes because no trustworthy minimum bound was discovered
-- NVIDIA power-limit writes and restoration
 - AMDGPU controls because no AMDGPU is installed
 - Intel GPU observation on real hardware because no active Intel GPU is present
 - Suspend and resume capability refresh on the target host

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.3
+
+- Completed real-hardware NVIDIA power-limit validation on the refreshed Ubuntu target.
+- Validated NVIDIA driver 580.178.04 with the GeForce GTX TITAN X and stable GPU UUID.
+- Captured the original 150 W power limit and confirmed the supported 150 to 275 W range.
+- Applied a bounded 175 W power limit and verified the applied value through NVIDIA management telemetry.
+- Restored the exact original 150 W power limit and verified restoration.
+- Confirmed the post-test card state was healthy and idle at 35 C, P8, and 0 percent GPU utilization.
+- Confirmed no software power-cap, hardware slowdown, thermal slowdown, power braking, PCIe replay, or recovery condition after restoration.
+- Kept dry-run enabled and RAPL power-cap control disabled by default.
+- Replaced placeholder repository links with the official swetoast/PowerNap GitHub repository.
+- Declared GNU GPL v3.0 in package metadata and corrected the README license section.
+
 ## 0.11.2
 
 - Completed real-hardware CPUFreq validation across all twelve policies on the Ubuntu 22.04.5 target.
