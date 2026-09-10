@@ -4,7 +4,7 @@ PowerNap is a local, capability-aware Linux power-management daemon. It balances
 
 PowerNap is profile-centric rather than governor-centric. It selects an abstract operating profile, then maps that profile to the controls the current system actually supports. A machine may use CPUFreq governors and frequency ceilings, another may expose energy-performance preferences, and a GPU may provide a bounded power limit. Unsupported controls are reported and skipped instead of guessed.
 
-> **Project status:** PowerNap 0.9.2 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. Physical CPU and GPU control has not been validated on every supported hardware path.
+> **Project status:** PowerNap 0.9.4 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. Physical CPU and GPU control has not been validated on every supported hardware path.
 
 ## Table of contents
 
@@ -447,7 +447,7 @@ Hardware integration testing must be performed explicitly because automated test
 ### Verified in the packaged build
 
 - Python module compilation
-- 50 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
+- 68 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
 - One-shot dry-run execution
 - JSON validation for one-shot, capability, and check output
 - Final ZIP integrity and content inspection
@@ -469,9 +469,9 @@ Before a 1.0 release, the project needs:
 
 - Real-hardware validation for each advertised writable adapter
 - Wider tests for hourly, quarter-hour, DST, missing, duplicate, overlapping, and out-of-order price intervals
-- Persistent price caching and explicit stale-data reporting
+- Broader stale-price quality reporting and cache-corruption recovery
 - Expanded AMDGPU and Intel GPU validation
-- RAPL application tests on supported hardware
+- Physical RAPL application and restoration tests on supported hardware
 - Service installation and upgrade tests
 - Branch coverage measurement and expansion toward the documented target
 - Long-duration daemon and suspend/resume testing

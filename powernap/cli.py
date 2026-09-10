@@ -57,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
             warnings.append("NVIDIA management is enabled but no NVML-manageable GPU was found")
         if cfg.manage_amdgpu and not capabilities.amd_gpus:
             warnings.append("AMDGPU management is enabled but no AMDGPU device was found")
+        if cfg.manage_powercap and not any(zone.constraints for zone in capabilities.powercap_zones):
+            errors.append("Power-cap management is enabled but no bounded RAPL constraints were found")
+        elif cfg.manage_powercap and not any(
+            constraint.min_power_uw is not None and constraint.max_power_uw is not None
+            for zone in capabilities.powercap_zones for constraint in zone.constraints
+        ):
+            errors.append("Power-cap management is enabled but discovered constraints have no safe bounds")
         print(json.dumps({
             "version": __version__,
             "valid": not errors,
@@ -75,30 +82,36 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(data, indent=2))
         return 0
 
-    service = PriceService(
-        cfg.area,
-        cfg.timezone,
-        cfg.request_timeout_sec,
-        cfg.price_provider,
-        cfg.fallback_provider,
-        cfg.price_cache_hours,
-    )
-    if args.command == "prices":
-        print(json.dumps(asdict(service.context(lookahead_hours=cfg.lookahead_hours)), indent=2))
-        return 0
-    price = None if args.no_price else service.context(lookahead_hours=cfg.lookahead_hours)
-    state = Collector(cfg, capabilities).collect(price)
-    decision = DecisionEngine(cfg).decide(state)
-    controller = Controller(capabilities, cfg.dry_run, cfg.manage_cpu, cfg.manage_nvidia, cfg.manage_amdgpu)
-    plan = controller.plan(decision.recommended)
-    results = controller.apply_transaction(plan)
-    print(json.dumps({
-        "state": asdict(state),
-        "decision": decision.to_dict(),
-        "plan": [asdict(item) for item in plan],
-        "results": [asdict(item) for item in results],
-    }, indent=2, default=str))
-    return 0 if all(item.state.value in {"applied", "simulated"} for item in results) else 2
+    repository = Repository(Path(cfg.database_path))
+    try:
+        repository.record_capabilities(capabilities)
+        service = PriceService(
+            cfg.area,
+            cfg.timezone,
+            cfg.request_timeout_sec,
+            cfg.price_provider,
+            cfg.fallback_provider,
+            cfg.price_cache_hours,
+            repository=repository,
+        )
+        if args.command == "prices":
+            print(json.dumps(asdict(service.context(lookahead_hours=cfg.lookahead_hours)), indent=2))
+            return 0
+        price = None if args.no_price else service.context(lookahead_hours=cfg.lookahead_hours)
+        state = Collector(cfg, capabilities).collect(price)
+        decision = DecisionEngine(cfg).decide(state)
+        controller = Controller(capabilities, cfg.dry_run, cfg.manage_cpu, cfg.manage_nvidia, cfg.manage_amdgpu, cfg.manage_powercap)
+        plan = controller.plan(decision.recommended)
+        results = controller.apply_transaction(plan)
+        print(json.dumps({
+            "state": asdict(state),
+            "decision": decision.to_dict(),
+            "plan": [asdict(item) for item in plan],
+            "results": [asdict(item) for item in results],
+        }, indent=2, default=str))
+        return 0 if all(item.state.value in {"applied", "simulated"} for item in results) else 2
+    finally:
+        repository.close()
 
 
 if __name__ == "__main__":

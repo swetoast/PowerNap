@@ -45,3 +45,12 @@ def test_explicit_missing_config_exits_with_parser_error(tmp_path):
     with pytest.raises(SystemExit) as exc:
         main(['--config',str(tmp_path/'missing.conf'),'check'])
     assert exc.value.code == 2
+
+
+def test_check_rejects_enabled_powercap_without_constraints(tmp_path, capsys):
+    p = config(tmp_path, False)
+    p.write_text(p.read_text().replace('[cpu]\nenabled=false', '[cpu]\nenabled=false\npowercap_enabled=true'))
+    with patch('powernap.cli.discover', return_value=Capabilities()):
+        assert main(['--config', str(p), 'check']) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert any('Power-cap management' in item for item in payload['errors'])

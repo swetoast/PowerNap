@@ -87,3 +87,13 @@ def test_non_finite_prices_are_rejected():
     start = datetime(2026, 9, 10, tzinfo=timezone.utc)
     with pytest.raises(ValueError, match="no valid intervals"):
         service(Session([[row(start, start + timedelta(hours=1), "nan")]])).fetch_day(start.date(), "elpris_eu")
+
+
+def test_persisted_prices_are_loaded_on_restart(tmp_path, monkeypatch):
+    from powernap.database import Repository
+    repo = Repository(tmp_path / "prices.db")
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    repo.store_prices("SE3", [PricePoint(start, start + timedelta(hours=1), 1.5, "cached")])
+    s = PriceService("SE3", "Europe/Stockholm", 5, "elpris_eu", "elprisetjustnu", 36, repository=repo)
+    assert any(point.sek_kwh == 1.5 for _, points in s.cache.values() for point in points)
+    repo.close()

@@ -51,3 +51,24 @@ def test_interrupted_legacy_migration_is_resumed(tmp_path):
     names = {row[0] for row in r.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "decisions_legacy_090" not in names
     r.close()
+
+
+def test_capability_snapshots_only_record_changes(tmp_path):
+    from powernap.capabilities import Capabilities
+    r = Repository(tmp_path / "x.db")
+    assert r.record_capabilities(Capabilities()) is True
+    assert r.record_capabilities(Capabilities()) is False
+    assert len(r.report()["capabilities"]) == 1
+    r.close()
+
+
+def test_price_intervals_round_trip(tmp_path):
+    from datetime import datetime, timezone
+    from powernap.price import PricePoint
+    r = Repository(tmp_path / "x.db")
+    point = PricePoint(datetime(2026,9,10,tzinfo=timezone.utc), datetime(2026,9,10,1,tzinfo=timezone.utc), 1.25, "test")
+    r.store_prices("SE3", [point])
+    rows = r.load_prices("SE3")
+    assert rows[0]["sek_kwh"] == 1.25
+    assert rows[0]["provider"] == "test"
+    r.close()

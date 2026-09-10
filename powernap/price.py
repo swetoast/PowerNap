@@ -37,6 +37,7 @@ class PriceService:
         fallback: str | None = None,
         cache_hours: float = 36.0,
         session: requests.Session | None = None,
+        repository=None,
     ):
         if provider not in BASES:
             raise ValueError(f"Unknown price provider: {provider}")
@@ -49,7 +50,40 @@ class PriceService:
         self.fallback = fallback if fallback != provider else None
         self.cache_hours = cache_hours
         self.session = session or requests.Session()
+        self.repository = repository
         self.cache: dict[date, tuple[float, list[PricePoint]]] = {}
+        self._load_persisted()
+
+    def _load_persisted(self) -> None:
+        if self.repository is None:
+            return
+        try:
+            rows = self.repository.load_prices(self.area)
+        except Exception as exc:
+            logging.warning("Unable to load persisted prices: %s", exc)
+            return
+        grouped: dict[date, list[PricePoint]] = {}
+        fetched: dict[date, float] = {}
+        for row in rows:
+            try:
+                start = datetime.fromisoformat(row["start"])
+                end = datetime.fromisoformat(row["end"])
+                point = PricePoint(start, end, float(row["sek_kwh"]), row["provider"])
+                day = start.astimezone(self.tz).date()
+                grouped.setdefault(day, []).append(point)
+                fetched[day] = max(fetched.get(day, 0), row["fetched_ms"] / 1000.0)
+            except (KeyError, TypeError, ValueError):
+                continue
+        for day, points in grouped.items():
+            self.cache[day] = (fetched[day], sorted(points, key=lambda point: point.start))
+
+    def _persist(self, points: list[PricePoint]) -> None:
+        if self.repository is None:
+            return
+        try:
+            self.repository.store_prices(self.area, points)
+        except Exception as exc:
+            logging.warning("Unable to persist prices: %s", exc)
 
     def fetch_day(self, day: date, provider: str) -> list[PricePoint]:
         url = f"{BASES[provider]}/{day:%Y/%m-%d}_{self.area}.json"
@@ -100,7 +134,9 @@ class PriceService:
             if not provider:
                 continue
             try:
-                self.cache[day] = (now_epoch, self.fetch_day(day, provider))
+                points = self.fetch_day(day, provider)
+                self.cache[day] = (now_epoch, points)
+                self._persist(points)
                 return
             except Exception as exc:
                 errors.append(f"{provider}: {exc}")

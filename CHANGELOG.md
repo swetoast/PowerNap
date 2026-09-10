@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.4
+
+- Added structured CPU inventory with vendor, model, logical CPU count, physical core count, and online CPU set.
+- Added structured RAPL and power-cap constraints with current, minimum, maximum, time-window, zone-name, and enabled-state discovery.
+- Added bounded profile-specific power-cap targets for Eco, Balanced, Responsive, and Maximum.
+- Added power-cap dry-run isolation, read-back verification, rollback participation, baseline restoration, external-change detection, and per-control yielding.
+- Added configuration checks that reject enabled power-cap control when safe bounded constraints are unavailable.
+- Kept power-cap control disabled by default pending physical hardware validation.
+- Expanded the regression suite to 68 tests.
+- Raised measured branch coverage to 72.39 percent and the CI floor to 70 percent.
+
+## 0.9.3
+
+- Added persistent normalized electricity-price intervals in SQLite and restart-safe cache loading.
+- Added capability snapshots with change fingerprints and retention.
+- Added database health information to status and report output.
+- Scoped yield ownership to only conflicting controls instead of stopping all management.
+- Prevented shutdown restoration from overwriting externally yielded controls.
+- Added long-gap and resume detection with capability rediscovery and transition reset.
+- Preserved yielded controls and extended baseline coverage after capability refresh.
+- Added a conservative Degraded status for required control failures and database failures.
+- Added database recovery clearing after successful writes and guarded retention pruning.
+- Expanded the regression suite to 57 tests.
+- Measured 69.64 percent branch coverage.
+
 ## 0.9.2
 
 - Added conservative Balanced thermal ceiling when temperature telemetry is unavailable.

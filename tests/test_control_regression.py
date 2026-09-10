@@ -67,3 +67,80 @@ def test_malformed_current_frequency_does_not_crash_planning(tmp_path):
     (tmp_path / "policy0" / "scaling_max_freq").write_text("invalid")
     plan = Controller(Capabilities(cpu_policies=(policy,)), True, True, False, False).plan(Profile.ECO)
     assert any(item.target.endswith("scaling_max_freq") for item in plan)
+
+
+def test_yield_is_scoped_to_only_the_conflicting_control(tmp_path):
+    policy = make_policy(tmp_path / "policy0")
+    ctl = Controller(Capabilities(cpu_policies=(policy,)), True, True, False, False)
+    governor = str(tmp_path / "policy0" / "scaling_governor")
+    ctl.yield_targets((governor,))
+    plan = ctl.plan(Profile.ECO)
+    assert all(item.target != governor for item in plan)
+    assert any(item.target.endswith("scaling_max_freq") for item in plan)
+
+
+def test_restore_does_not_overwrite_yielded_external_control(tmp_path):
+    target = tmp_path / "value"
+    target.write_text("external")
+    ctl = Controller(Capabilities(), False, False, False, False)
+    ctl.yield_targets((str(target),))
+    assert ctl.restore({str(target): "baseline"}) == []
+    assert target.read_text() == "external"
+
+
+def powercap_fixture(tmp_path, enabled=True, current=65000000, minimum=10000000, maximum=95000000):
+    from powernap.capabilities import PowerCapConstraint, PowerCapZone
+    target = tmp_path / "constraint_0_power_limit_uw"
+    target.write_text(str(current))
+    constraint = PowerCapConstraint(str(target), "long_term", current, minimum, maximum, 28000000)
+    zone = PowerCapZone(str(tmp_path), "package-0", enabled, (constraint,))
+    return target, Capabilities(powercap_zones=(zone,))
+
+
+def test_powercap_profile_targets_are_bounded_and_monotonic(tmp_path):
+    target, capabilities = powercap_fixture(tmp_path)
+    controller = Controller(capabilities, True, False, False, False, True)
+    values = [int(controller.plan(profile)[0].requested_value) for profile in Profile]
+    assert 10000000 <= values[0] < values[1] < values[2] < values[3] <= 95000000
+    assert values[-1] == 95000000
+    assert target.read_text() == "65000000"
+
+
+def test_powercap_disabled_zone_is_not_controlled(tmp_path):
+    _, capabilities = powercap_fixture(tmp_path, enabled=False)
+    assert Controller(capabilities, True, False, False, False, True).plan(Profile.ECO) == []
+
+
+def test_powercap_without_bounds_is_read_only(tmp_path):
+    _, capabilities = powercap_fixture(tmp_path, minimum=None, maximum=None)
+    assert Controller(capabilities, True, False, False, False, True).plan(Profile.ECO) == []
+
+
+def test_powercap_dry_run_does_not_write(tmp_path):
+    target, capabilities = powercap_fixture(tmp_path)
+    controller = Controller(capabilities, True, False, False, False, True)
+    result = controller.apply_transaction(controller.plan(Profile.ECO))[0]
+    assert result.state == ResultState.SIMULATED
+    assert target.read_text() == "65000000"
+
+
+def test_powercap_write_verifies_and_restores_baseline(tmp_path):
+    target, capabilities = powercap_fixture(tmp_path)
+    controller = Controller(capabilities, False, False, False, False, True)
+    baseline = dict(controller.expected_state)
+    result = controller.apply_transaction(controller.plan(Profile.ECO))[0]
+    assert result.state == ResultState.APPLIED
+    assert target.read_text() != "65000000"
+    restored = controller.restore(baseline)
+    assert restored[0].state == ResultState.APPLIED
+    assert target.read_text() == "65000000"
+
+
+def test_powercap_external_change_can_yield_only_that_constraint(tmp_path):
+    target, capabilities = powercap_fixture(tmp_path)
+    controller = Controller(capabilities, True, False, False, False, True)
+    target.write_text("70000000")
+    changes = controller.external_changes()
+    assert str(target) in changes
+    controller.yield_targets(changes)
+    assert controller.plan(Profile.ECO) == []

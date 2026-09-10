@@ -48,6 +48,23 @@ class Repository:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS capabilities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts_ms INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_capabilities_ts ON capabilities(ts_ms);
+            CREATE TABLE IF NOT EXISTS price_intervals (
+                provider TEXT NOT NULL,
+                area TEXT NOT NULL,
+                start TEXT NOT NULL,
+                end TEXT NOT NULL,
+                sek_kwh REAL NOT NULL,
+                fetched_ms INTEGER NOT NULL,
+                PRIMARY KEY(provider, area, start, end)
+            );
+            CREATE INDEX IF NOT EXISTS idx_price_intervals_start ON price_intervals(area,start);
         """)
         self.conn.commit()
         self._import_legacy_rows()
@@ -117,6 +134,41 @@ class Repository:
         except sqlite3.Error as exc:
             raise RuntimeError(f"Unable to record PowerNap cycle in {self.path}: {exc}") from exc
 
+
+    def record_capabilities(self, capabilities) -> bool:
+        import hashlib
+        payload = json.dumps(capabilities.to_dict(), sort_keys=True, separators=(",", ":"))
+        fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        previous = self.conn.execute("SELECT fingerprint FROM capabilities ORDER BY id DESC LIMIT 1").fetchone()
+        if previous and previous[0] == fingerprint:
+            return False
+        with self.conn:
+            self.conn.execute("INSERT INTO capabilities(ts_ms,fingerprint,payload) VALUES(?,?,?)", (time.time_ns() // 1_000_000, fingerprint, payload))
+        return True
+
+    def store_prices(self, area: str, points) -> None:
+        fetched_ms = time.time_ns() // 1_000_000
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO price_intervals(provider,area,start,end,sek_kwh,fetched_ms) VALUES(?,?,?,?,?,?)",
+                [(p.provider, area, p.start.isoformat(), p.end.isoformat(), p.sek_kwh, fetched_ms) for p in points],
+            )
+
+    def load_prices(self, area: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT provider,start,end,sek_kwh,fetched_ms FROM price_intervals WHERE area=? ORDER BY start",
+            (area,),
+        )
+        return [dict(row) for row in rows]
+
+    def health(self) -> dict:
+        result = {"database": "healthy", "path": str(self.path)}
+        try:
+            self.conn.execute("SELECT 1").fetchone()
+        except sqlite3.Error as exc:
+            result.update(database="failed", error=str(exc))
+        return result
+
     def set_meta(self, key: str, value) -> None:
         with self.conn:
             self.conn.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", (key, json.dumps(value)))
@@ -131,10 +183,16 @@ class Repository:
             self.conn.execute("DELETE FROM samples WHERE ts_ms < ?", (now_ms - sample_days * 86_400_000,))
             self.conn.execute("DELETE FROM decisions WHERE ts_ms < ?", (now_ms - event_days * 86_400_000,))
             self.conn.execute("DELETE FROM controls WHERE ts_ms < ?", (now_ms - event_days * 86_400_000,))
+            self.conn.execute("DELETE FROM capabilities WHERE ts_ms < ?", (now_ms - event_days * 86_400_000,))
+            self.conn.execute("DELETE FROM price_intervals WHERE fetched_ms < ?", (now_ms - event_days * 86_400_000,))
 
-    def report(self, limit: int = 25) -> dict[str, list[dict]]:
+    def report(self, limit: int = 25) -> dict:
         limit = max(1, min(1000, int(limit)))
         return {
+            "health": self.health(),
+            "capabilities": [dict(row) for row in self.conn.execute(
+                "SELECT ts_ms,fingerprint FROM capabilities ORDER BY id DESC LIMIT ?", (limit,)
+            )],
             "decisions": [dict(row) for row in self.conn.execute(
                 "SELECT ts_ms,recommended,reason FROM decisions ORDER BY id DESC LIMIT ?", (limit,)
             )],

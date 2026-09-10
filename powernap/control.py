@@ -14,6 +14,7 @@ GOVERNORS = {
 }
 FREQUENCY_FRACTION = {Profile.ECO: 0.50, Profile.BALANCED: 0.75, Profile.RESPONSIVE: 0.90, Profile.MAXIMUM: 1.0}
 GPU_POWER_FRACTION = {Profile.ECO: 0.0, Profile.BALANCED: 0.25, Profile.RESPONSIVE: 0.60, Profile.MAXIMUM: 1.0}
+POWERCAP_FRACTION = {Profile.ECO: 0.45, Profile.BALANCED: 0.70, Profile.RESPONSIVE: 0.90, Profile.MAXIMUM: 1.0}
 EPP = {
     Profile.ECO: ("power", "balance_power"),
     Profile.BALANCED: ("balance_power", "balance_performance"),
@@ -34,12 +35,15 @@ class Controller:
         manage_cpu: bool = True,
         manage_nvidia: bool = True,
         manage_amdgpu: bool = True,
+        manage_powercap: bool = False,
     ):
         self.capabilities = capabilities
         self.dry_run = dry_run
         self.manage_cpu = manage_cpu
         self.manage_nvidia = manage_nvidia
         self.manage_amdgpu = manage_amdgpu
+        self.manage_powercap = manage_powercap
+        self.yielded_targets: set[str] = set()
         self.expected_state = self.snapshot()
 
     def snapshot(self) -> dict[str, str | float | None]:
@@ -58,6 +62,12 @@ class Controller:
                 value = read_text(Path(path))
                 if value is not None:
                     state[path] = value
+        if self.manage_powercap:
+            for zone in self.capabilities.powercap_zones:
+                for constraint in zone.constraints:
+                    value = read_text(Path(constraint.path))
+                    if value is not None:
+                        state[constraint.path] = value
         if self.manage_nvidia:
             state.update(self._nvidia_snapshot())
         return state
@@ -91,15 +101,24 @@ class Controller:
             if key in current_state and current_state[key] != expected
         }
 
+    @staticmethod
+    def operation_key(operation: ControlOperation) -> str:
+        return operation.target if operation.adapter == "file" else f"nvml://{operation.target}/power_limit_w"
+
+    def yield_targets(self, targets) -> None:
+        self.yielded_targets.update(targets)
+
     def plan(self, profile: Profile) -> list[ControlOperation]:
         operations: list[ControlOperation] = []
         if self.manage_cpu:
             operations.extend(self._cpu_plan(profile))
+        if self.manage_powercap:
+            operations.extend(self._powercap_plan(profile))
         if self.manage_nvidia:
             operations.extend(self._nvidia_plan(profile))
         if self.manage_amdgpu:
             operations.extend(self._amd_plan(profile))
-        return operations
+        return [operation for operation in operations if self.operation_key(operation) not in self.yielded_targets]
 
     def _cpu_plan(self, profile: Profile) -> list[ControlOperation]:
         operations = []
@@ -131,6 +150,26 @@ class Controller:
                 operations.append(ControlOperation("file", str(epp_path), current_epp, target_epp, False))
             if not increasing and target_max is not None and current_max != str(target_max):
                 operations.append(ControlOperation("file", str(max_path), current_max, target_max))
+        return operations
+
+    def _powercap_plan(self, profile: Profile) -> list[ControlOperation]:
+        operations = []
+        fraction = POWERCAP_FRACTION[profile]
+        for zone in self.capabilities.powercap_zones:
+            if zone.enabled is False:
+                continue
+            for constraint in zone.constraints:
+                if constraint.power_limit_uw is None:
+                    continue
+                minimum = constraint.min_power_uw
+                maximum = constraint.max_power_uw
+                if minimum is None or maximum is None or maximum < minimum:
+                    continue
+                target = int(round(minimum + (maximum - minimum) * fraction))
+                target = max(minimum, min(maximum, target))
+                operations.append(ControlOperation(
+                    "file", constraint.path, read_text(Path(constraint.path)), str(target), False
+                ))
         return operations
 
     def _nvidia_plan(self, profile: Profile) -> list[ControlOperation]:
@@ -171,7 +210,7 @@ class Controller:
         return results
 
     def _remember(self, result: OperationResult) -> None:
-        key = result.operation.target if result.operation.adapter == "file" else f"nvml://{result.operation.target}/power_limit_w"
+        key = self.operation_key(result.operation)
         self.expected_state[key] = result.verified_value
 
     def _apply(self, operation: ControlOperation) -> OperationResult:
@@ -228,7 +267,7 @@ class Controller:
     def restore(self, snapshot: Mapping[str, str | float | None]) -> list[OperationResult]:
         operations = []
         for target, value in snapshot.items():
-            if value is None:
+            if target in self.yielded_targets or value is None:
                 continue
             if target.startswith("nvml://"):
                 uuid = target.removeprefix("nvml://").removesuffix("/power_limit_w")

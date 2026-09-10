@@ -21,6 +21,15 @@ def read_int(path: Path) -> int | None:
 
 
 @dataclass(frozen=True)
+class CPUInfo:
+    vendor: str | None
+    model: str | None
+    logical_cpus: int
+    physical_cores: int | None
+    online_cpus: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class CPUFreqPolicy:
     path: str
     affected_cpus: tuple[int, ...]
@@ -36,10 +45,21 @@ class CPUFreqPolicy:
 
 
 @dataclass(frozen=True)
+class PowerCapConstraint:
+    path: str
+    name: str
+    power_limit_uw: int | None
+    min_power_uw: int | None
+    max_power_uw: int | None
+    time_window_us: int | None
+
+
+@dataclass(frozen=True)
 class PowerCapZone:
     path: str
     name: str
-    constraints: tuple[str, ...]
+    enabled: bool | None
+    constraints: tuple[PowerCapConstraint, ...]
 
 
 @dataclass(frozen=True)
@@ -66,6 +86,7 @@ class AmdGPU:
 
 @dataclass(frozen=True)
 class Capabilities:
+    cpu_info: CPUInfo | None = None
     cpu_policies: tuple[CPUFreqPolicy, ...] = ()
     powercap_zones: tuple[PowerCapZone, ...] = ()
     nvidia_gpus: tuple[NvidiaGPU, ...] = ()
@@ -95,6 +116,30 @@ def _cpu_list(value: str | None) -> tuple[int, ...]:
     return tuple(dict.fromkeys(cpus))
 
 
+def discover_cpu_info(root: Path = Path("/sys"), proc_root: Path = Path("/proc")) -> CPUInfo:
+    cpuinfo = read_text(proc_root / "cpuinfo") or ""
+    blocks = [block for block in cpuinfo.split("\n\n") if block.strip()]
+    records = []
+    for block in blocks:
+        record = {}
+        for line in block.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                record[key.strip()] = value.strip()
+        records.append(record)
+    first = records[0] if records else {}
+    vendor = first.get("vendor_id") or first.get("CPU implementer") or first.get("Hardware")
+    model = first.get("model name") or first.get("Processor") or first.get("Hardware")
+    online = _cpu_list(read_text(root / "devices/system/cpu/online"))
+    if not online:
+        online = tuple(range(len(records)))
+    core_keys = {
+        (record.get("physical id", "0"), record.get("core id", record.get("processor", str(index))))
+        for index, record in enumerate(records)
+    }
+    physical = len(core_keys) if records else None
+    return CPUInfo(vendor, model, len(records), physical, online)
+
 def discover_cpu(root: Path = Path("/sys")) -> tuple[CPUFreqPolicy, ...]:
     paths = list((root / "devices/system/cpu/cpufreq").glob("policy*"))
     paths.sort(key=lambda p: int(p.name[6:]) if p.name[6:].isdigit() else 10**9)
@@ -119,12 +164,26 @@ def discover_cpu(root: Path = Path("/sys")) -> tuple[CPUFreqPolicy, ...]:
 def discover_powercap(root: Path = Path("/sys")) -> tuple[PowerCapZone, ...]:
     result = []
     for path in sorted((root / "class/powercap").glob("*:*")):
-        if path.is_dir():
-            result.append(PowerCapZone(
-                str(path),
-                read_text(path / "name") or path.name,
-                tuple(str(item) for item in sorted(path.glob("constraint_*_power_limit_uw"))),
+        if not path.is_dir():
+            continue
+        constraints = []
+        for limit_path in sorted(path.glob("constraint_*_power_limit_uw")):
+            prefix = limit_path.name.removesuffix("_power_limit_uw")
+            constraints.append(PowerCapConstraint(
+                path=str(limit_path),
+                name=read_text(path / f"{prefix}_name") or prefix,
+                power_limit_uw=read_int(limit_path),
+                min_power_uw=read_int(path / f"{prefix}_min_power_uw"),
+                max_power_uw=read_int(path / f"{prefix}_max_power_uw"),
+                time_window_us=read_int(path / f"{prefix}_time_window_us"),
             ))
+        enabled_value = read_int(path / "enabled")
+        result.append(PowerCapZone(
+            path=str(path),
+            name=read_text(path / "name") or path.name,
+            enabled=None if enabled_value is None else bool(enabled_value),
+            constraints=tuple(constraints),
+        ))
     return tuple(result)
 
 
@@ -197,6 +256,7 @@ def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
 
 def discover(root: Path = Path("/sys"), proc_root: Path = Path("/proc")) -> Capabilities:
     return Capabilities(
+        cpu_info=discover_cpu_info(root, proc_root),
         cpu_policies=discover_cpu(root),
         powercap_zones=discover_powercap(root),
         nvidia_gpus=discover_nvidia(),
