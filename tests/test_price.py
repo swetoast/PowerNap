@@ -81,3 +81,9 @@ def test_context_crosses_midnight_without_assuming_interval_count(monkeypatch):
     context = s.context(now, 2)
     assert context.current_sek_kwh == 2.0
     assert context.future_rank is not None
+
+
+def test_non_finite_prices_are_rejected():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="no valid intervals"):
+        service(Session([[row(start, start + timedelta(hours=1), "nan")]])).fetch_day(start.date(), "elpris_eu")

@@ -35,3 +35,28 @@ def test_critical_override_is_immediate():
     manager = TransitionManager(Config(), Profile.MAXIMUM, now=0)
     result = manager.evaluate(decision(Profile.ECO, ThermalState.CRITICAL), now=1)
     assert result.allowed and result.profile == Profile.ECO
+
+
+def test_thermal_recovery_hysteresis_prevents_chatter():
+    engine = DecisionEngine(Config(thermal_recovery_c=5))
+    assert engine.decide(state(91)).thermal_state == ThermalState.CRITICAL
+    assert engine.decide(state(87)).thermal_state == ThermalState.CRITICAL
+    assert engine.decide(state(84)).thermal_state == ThermalState.HOT
+    assert engine.decide(state(72)).thermal_state == ThermalState.HOT
+    assert engine.decide(state(69)).thermal_state == ThermalState.WARM
+    assert engine.decide(state(57)).thermal_state == ThermalState.WARM
+    assert engine.decide(state(54)).thermal_state == ThermalState.NORMAL
+
+
+def test_missing_temperature_resets_hysteresis():
+    engine = DecisionEngine(Config())
+    assert engine.decide(state(91)).thermal_state == ThermalState.CRITICAL
+    assert engine.decide(state(None)).thermal_state == ThermalState.UNKNOWN
+    assert engine.decide(state(84)).thermal_state == ThermalState.HOT
+
+
+def test_missing_temperature_uses_conservative_balanced_ceiling():
+    result = DecisionEngine(Config()).decide(state(None))
+    assert result.thermal_state == ThermalState.UNKNOWN
+    assert result.safety_ceiling == Profile.BALANCED
+    assert result.recommended <= Profile.BALANCED

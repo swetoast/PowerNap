@@ -128,6 +128,9 @@ def discover_powercap(root: Path = Path("/sys")) -> tuple[PowerCapZone, ...]:
     return tuple(result)
 
 
+def _nvml_text(value) -> str:
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
+
 def _nvml_watts(call, handle) -> float | None:
     try:
         return float(call(handle)) / 1000.0
@@ -153,8 +156,8 @@ def discover_nvidia() -> tuple[NvidiaGPU, ...]:
                 pass
             result.append(NvidiaGPU(
                 index=index,
-                uuid=str(pynvml.nvmlDeviceGetUUID(handle)),
-                name=str(pynvml.nvmlDeviceGetName(handle)),
+                uuid=_nvml_text(pynvml.nvmlDeviceGetUUID(handle)),
+                name=_nvml_text(pynvml.nvmlDeviceGetName(handle)),
                 min_power_w=minimum,
                 max_power_w=maximum,
                 default_power_w=_nvml_watts(pynvml.nvmlDeviceGetPowerManagementDefaultLimit, handle),

@@ -118,7 +118,11 @@ class Controller:
                 target_max = max(policy.hw_min_khz, min(policy.hw_max_khz, target_max))
             target_epp = next((item for item in EPP[profile] if item in policy.epp_available), None)
 
-            increasing = target_max is not None and current_max is not None and target_max > int(current_max)
+            try:
+                current_max_value = int(current_max) if current_max is not None else None
+            except ValueError:
+                current_max_value = None
+            increasing = target_max is not None and current_max_value is not None and target_max > current_max_value
             if increasing and current_max != str(target_max):
                 operations.append(ControlOperation("file", str(max_path), current_max, target_max))
             if governor and current_governor != governor:

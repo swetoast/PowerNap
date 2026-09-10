@@ -25,3 +25,10 @@ def test_invalid_ranges_are_rejected(tmp_path: Path):
     path.write_text("[price]\nlookahead_hours=0\n[sampling]\nbusy_core_threshold=101\n")
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_unknown_price_provider_is_rejected(tmp_path: Path):
+    path = tmp_path / "powernap.conf"
+    path.write_text("[price]\nprovider=unknown\n")
+    with pytest.raises(ConfigError, match="provider is unsupported"):
+        load_config(path)

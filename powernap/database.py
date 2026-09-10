@@ -53,7 +53,7 @@ class Repository:
         self._import_legacy_rows()
 
     def _migrate_legacy_schema(self) -> None:
-        """Rename 0.9.0 tables whose columns cannot support the current schema."""
+        """Stage old or interrupted 0.9.0 tables for idempotent import."""
         tables = {row[0] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         expected = {
             "samples": {"id", "ts_ms", "timestamp", "payload"},
@@ -61,29 +61,38 @@ class Repository:
             "controls": {"id", "ts_ms", "adapter", "target", "result", "payload"},
         }
         renamed = []
-        for table, required in expected.items():
-            if table not in tables:
-                continue
-            columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
-            if required.issubset(columns):
-                continue
-            legacy = f"{table}_legacy_090"
-            self.conn.execute(f"DROP TABLE IF EXISTS {legacy}")
-            self.conn.execute(f"ALTER TABLE {table} RENAME TO {legacy}")
-            renamed.append((table, legacy, columns))
-        self.conn.commit()
+        with self.conn:
+            for table, required in expected.items():
+                legacy = f"{table}_legacy_090"
+                if legacy in tables:
+                    columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({legacy})")}
+                    renamed.append((table, legacy, columns))
+                    continue
+                if table not in tables:
+                    continue
+                columns = {row[1] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+                if required.issubset(columns):
+                    continue
+                self.conn.execute(f"ALTER TABLE {table} RENAME TO {legacy}")
+                renamed.append((table, legacy, columns))
         self._legacy_tables = renamed
 
     def _import_legacy_rows(self) -> None:
-        for table, legacy, columns in getattr(self, "_legacy_tables", []):
-            if table == "samples" and {"ts", "timestamp", "payload"}.issubset(columns):
-                self.conn.execute(f"INSERT INTO samples(ts_ms,timestamp,payload) SELECT ts,timestamp,payload FROM {legacy}")
-            elif table == "decisions" and {"ts", "recommended", "reason", "payload"}.issubset(columns):
-                self.conn.execute(f"INSERT INTO decisions(ts_ms,recommended,reason,payload) SELECT ts,recommended,reason,payload FROM {legacy}")
-            elif table == "controls" and {"ts", "adapter", "target", "result", "payload"}.issubset(columns):
-                self.conn.execute(f"INSERT INTO controls(ts_ms,adapter,target,result,payload) SELECT ts,adapter,target,result,payload FROM {legacy}")
-            self.conn.execute(f"DROP TABLE {legacy}")
-        self.conn.commit()
+        with self.conn:
+            for table, legacy, columns in getattr(self, "_legacy_tables", []):
+                if table == "samples" and {"ts", "timestamp", "payload"}.issubset(columns):
+                    self.conn.execute(f"""INSERT INTO samples(ts_ms,timestamp,payload)
+                        SELECT l.ts,l.timestamp,l.payload FROM {legacy} l
+                        WHERE NOT EXISTS (SELECT 1 FROM samples n WHERE n.ts_ms=l.ts AND n.payload=l.payload)""")
+                elif table == "decisions" and {"ts", "recommended", "reason", "payload"}.issubset(columns):
+                    self.conn.execute(f"""INSERT INTO decisions(ts_ms,recommended,reason,payload)
+                        SELECT l.ts,l.recommended,l.reason,l.payload FROM {legacy} l
+                        WHERE NOT EXISTS (SELECT 1 FROM decisions n WHERE n.ts_ms=l.ts AND n.payload=l.payload)""")
+                elif table == "controls" and {"ts", "adapter", "target", "result", "payload"}.issubset(columns):
+                    self.conn.execute(f"""INSERT INTO controls(ts_ms,adapter,target,result,payload)
+                        SELECT l.ts,l.adapter,l.target,l.result,l.payload FROM {legacy} l
+                        WHERE NOT EXISTS (SELECT 1 FROM controls n WHERE n.ts_ms=l.ts AND n.payload=l.payload)""")
+                self.conn.execute(f"DROP TABLE {legacy}")
         self._legacy_tables = []
 
     def record_cycle(self, state: SystemState, decision: Decision, results: list[OperationResult]) -> None:

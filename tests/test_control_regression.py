@@ -60,3 +60,10 @@ def test_dry_run_never_writes(tmp_path):
     result = ctl.apply_transaction([ControlOperation("file", str(target), "old", "new")])
     assert result[0].state == ResultState.SIMULATED
     assert target.read_text() == "old"
+
+
+def test_malformed_current_frequency_does_not_crash_planning(tmp_path):
+    policy = make_policy(tmp_path / "policy0")
+    (tmp_path / "policy0" / "scaling_max_freq").write_text("invalid")
+    plan = Controller(Capabilities(cpu_policies=(policy,)), True, True, False, False).plan(Profile.ECO)
+    assert any(item.target.endswith("scaling_max_freq") for item in plan)

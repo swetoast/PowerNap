@@ -67,7 +67,7 @@ class Collector:
                     except Exception:
                         return None
                 result.append(GPUState(
-                    identity=str(pynvml.nvmlDeviceGetUUID(handle)),
+                    identity=(lambda value: value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value))(pynvml.nvmlDeviceGetUUID(handle)),
                     vendor="nvidia",
                     utilization=float(utilization.gpu) if utilization else None,
                     memory_utilization=float(utilization.memory) if utilization else None,

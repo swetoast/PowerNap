@@ -93,7 +93,7 @@ class Daemon:
                 reapply = self._resolve_external_changes()
                 if (gate.allowed or self.needs_reconcile or reapply) and not self.yielded:
                     results = self.controller.apply_transaction(self.controller.plan(gate.profile))
-                    self.needs_reconcile = False
+                    self.needs_reconcile = any(item.operation.required and item.state.value == "failed" for item in results)
                 self.repository.record_cycle(state, decision, results)
                 cycles += 1
                 if time.time() - last_prune >= 86_400:

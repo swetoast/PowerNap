@@ -100,6 +100,11 @@ def load_config(path: Path | None, dry_run: bool = False) -> Config:
     issues: list[str] = []
     if cfg.area not in {"SE1", "SE2", "SE3", "SE4"}:
         issues.append("[price] area must be SE1, SE2, SE3, or SE4")
+    providers = {"elpris_eu", "elprisetjustnu"}
+    if cfg.price_provider not in providers:
+        issues.append(f"[price] provider is unsupported: {cfg.price_provider}")
+    if cfg.fallback_provider not in providers:
+        issues.append(f"[price] fallback_provider is unsupported: {cfg.fallback_provider}")
     try:
         ZoneInfo(cfg.timezone)
     except ZoneInfoNotFoundError:

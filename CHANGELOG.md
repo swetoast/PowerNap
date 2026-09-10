@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.2
+
+- Added conservative Balanced thermal ceiling when temperature telemetry is unavailable.
+- Added thermal recovery hysteresis to prevent profile chatter near thresholds.
+- Fixed interrupted 0.9.0 database migrations so they resume safely and avoid duplicate imports.
+- Fixed first-cycle reconciliation retry behavior after required control failures.
+- Rejected unsupported price providers and non-finite electricity prices during validation.
+- Fixed malformed CPU frequency readings causing control-plan failures.
+- Normalized NVML byte-string identifiers and names.
+- Added CLI, configuration, migration, pricing, thermal recovery, and packaging regression coverage.
+- Added a GitHub Actions branch-coverage floor of 65 percent.
+- Expanded the regression suite to 50 tests and measured 69.58 percent branch coverage.
+
 ## 0.9.1
 
 - Fixed disabled CPU and GPU managers still producing control operations.

@@ -14,6 +14,7 @@ def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 class DecisionEngine:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self._previous_thermal = ThermalState.UNKNOWN
 
     def thermal_state(self, temperature: float | None) -> ThermalState:
         if temperature is None:
@@ -25,6 +26,24 @@ class DecisionEngine:
         if temperature >= self.cfg.warm_temp_c:
             return ThermalState.WARM
         return ThermalState.NORMAL
+
+    def _thermal_with_hysteresis(self, temperature: float | None) -> ThermalState:
+        raw = self.thermal_state(temperature)
+        if temperature is None:
+            self._previous_thermal = ThermalState.UNKNOWN
+            return ThermalState.UNKNOWN
+        previous = self._previous_thermal
+        recovery = self.cfg.thermal_recovery_c
+        if previous == ThermalState.CRITICAL and raw != ThermalState.CRITICAL and temperature >= self.cfg.critical_temp_c - recovery:
+            result = ThermalState.CRITICAL
+        elif previous == ThermalState.HOT and raw in {ThermalState.WARM, ThermalState.NORMAL} and temperature >= self.cfg.hot_temp_c - recovery:
+            result = ThermalState.HOT
+        elif previous == ThermalState.WARM and raw == ThermalState.NORMAL and temperature >= self.cfg.warm_temp_c - recovery:
+            result = ThermalState.WARM
+        else:
+            result = raw
+        self._previous_thermal = result
+        return result
 
     def decide(self, state: SystemState) -> Decision:
         cpu = state.cpu
@@ -63,20 +82,21 @@ class DecisionEngine:
         else:
             preference = Profile.BALANCED
 
-        component_states = [self.thermal_state(cpu.temperature_c)]
-        component_states.extend(self.thermal_state(gpu.temperature_c) for gpu in state.gpus)
-        known = [item for item in component_states if item != ThermalState.UNKNOWN]
-        thermal = max(known, key=lambda item: list(ThermalState).index(item)) if known else ThermalState.UNKNOWN
+        temperatures = [value for value in [cpu.temperature_c, *(gpu.temperature_c for gpu in state.gpus)] if value is not None]
+        hottest = max(temperatures) if temperatures else None
+        thermal = self._thermal_with_hysteresis(hottest)
         ceiling = {
             ThermalState.CRITICAL: Profile.ECO,
             ThermalState.HOT: Profile.BALANCED,
             ThermalState.WARM: Profile.RESPONSIVE,
             ThermalState.NORMAL: Profile.MAXIMUM,
-            ThermalState.UNKNOWN: Profile.MAXIMUM,
+            ThermalState.UNKNOWN: Profile.BALANCED,
         }[thermal]
         recommended = Profile(min(max(int(preference), int(floor)), int(ceiling)))
         if thermal == ThermalState.CRITICAL:
             reason = "Thermal Protect requires Eco immediately."
+        elif thermal == ThermalState.UNKNOWN and recommended == ceiling:
+            reason = "Balanced is the conservative ceiling while temperature data is unavailable."
         elif recommended == floor and floor > preference:
             reason = f"{floor.name.title()} required by measured demand; price cannot reduce it."
         elif recommended == ceiling and ceiling < preference:

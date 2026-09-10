@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -64,6 +65,8 @@ class PriceService:
                 start = datetime.fromisoformat(str(item["time_start"]).replace("Z", "+00:00"))
                 end = datetime.fromisoformat(str(item["time_end"]).replace("Z", "+00:00"))
                 price = float(item["SEK_per_kWh"])
+                if not math.isfinite(price):
+                    raise ValueError("non-finite price")
                 if start.tzinfo is None or end.tzinfo is None or end <= start:
                     raise ValueError("invalid interval")
                 points.append(PricePoint(start, end, price, provider))
@@ -117,7 +120,7 @@ class PriceService:
     def context(self, now: datetime | None = None, lookahead_hours: int = 3) -> PriceContext:
         local_now = (now or datetime.now(self.tz)).astimezone(self.tz)
         end = local_now + timedelta(hours=lookahead_hours)
-        required_days = {local_now.date(), end.date()}
+        required_days = tuple(dict.fromkeys((local_now.date(), end.date())))
         for day in required_days:
             try:
                 self.ensure(day)

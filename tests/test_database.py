@@ -33,3 +33,21 @@ def test_legacy_090_schema_is_migrated(tmp_path):
     columns = {row[1] for row in r.conn.execute("PRAGMA table_info(samples)")}
     assert {"id", "ts_ms"}.issubset(columns)
     r.close()
+
+
+def test_interrupted_legacy_migration_is_resumed(tmp_path):
+    import sqlite3
+    path = tmp_path / "interrupted.db"
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+      CREATE TABLE samples_legacy_090(ts INTEGER PRIMARY KEY,timestamp TEXT,payload TEXT);
+      CREATE TABLE decisions_legacy_090(ts INTEGER PRIMARY KEY,recommended TEXT,reason TEXT,payload TEXT);
+      CREATE TABLE controls_legacy_090(id INTEGER PRIMARY KEY,ts INTEGER,adapter TEXT,target TEXT,result TEXT,payload TEXT);
+      INSERT INTO decisions_legacy_090 VALUES(1,'balanced','interrupted','{}');
+    ''')
+    conn.commit(); conn.close()
+    r = Repository(path)
+    assert r.report()["decisions"][0]["reason"] == "interrupted"
+    names = {row[0] for row in r.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "decisions_legacy_090" not in names
+    r.close()
