@@ -4,7 +4,7 @@ PowerNap is a local, capability-aware Linux power-management daemon. It balances
 
 PowerNap is profile-centric rather than governor-centric. It selects an abstract operating profile, then maps that profile to the controls the current system actually supports. A machine may use CPUFreq governors and frequency ceilings, another may expose energy-performance preferences, and a GPU may provide a bounded power limit. Unsupported controls are reported and skipped instead of guessed.
 
-> **Project status:** PowerNap 0.11.0 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. Physical CPU and GPU control has not been validated on every supported hardware path.
+> **Project status:** PowerNap 0.11.1 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. The CPU governor write, readback, and restoration path has been validated on one supported acpi-cpufreq host. Other physical control paths remain under validation.
 
 ## Table of contents
 

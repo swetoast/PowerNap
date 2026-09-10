@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.1
+
+- Recorded the first real-hardware CPUFreq validation on Ubuntu 22.04.5 with an Intel Core i5-12400 and the acpi-cpufreq driver.
+- Verified a policy0 governor transition from ondemand to schedutil with successful readback.
+- Verified automatic restoration from schedutil to the original ondemand governor with successful readback.
+- Documented twelve independent CPUFreq policies, the 800000 to 2501000 kHz supported range, supported governors, and root write access.
+- Documented that EPP is unavailable with the active acpi-cpufreq configuration.
+- Documented package RAPL and NVIDIA capabilities discovered on the validation host without claiming those write paths as validated.
+- Kept dry-run enabled and power-cap control disabled by default.
+
 ## 0.11.0
 
 - Added non-blocking single-instance locking tied to the configured database path.
