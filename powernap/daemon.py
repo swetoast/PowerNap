@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import fcntl
 import signal
 import time
 from dataclasses import replace
@@ -22,6 +23,18 @@ class Daemon:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.stop_requested = False
+        self.lock_path = Path(f"{cfg.database_path}.lock")
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file = self.lock_path.open("a+", encoding="utf-8")
+        try:
+            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            self.lock_file.close()
+            raise RuntimeError(f"PowerNap is already running for {cfg.database_path}") from exc
+        self.lock_file.seek(0)
+        self.lock_file.truncate()
+        self.lock_file.write(str(__import__("os").getpid()))
+        self.lock_file.flush()
         self.capabilities = discover()
         self.repository = Repository(Path(cfg.database_path))
         self.repository.record_capabilities(self.capabilities)
@@ -140,7 +153,7 @@ class Daemon:
                         target_profile = min(Profile.BALANCED, decision.safety_ceiling)
                     else:
                         target_profile = gate.profile
-                    results = self.controller.apply_transaction(self.controller.plan(target_profile))
+                    results = self.controller.apply_transaction(self.controller.plan(target_profile, decision.gpu_recommended))
                     transaction = self.controller.transaction_summary(results)
                     required_failures = transaction["failed_required"] > 0
                     self.needs_reconcile = required_failures
@@ -185,7 +198,13 @@ class Daemon:
                 failed = [item for item in restore_results if item.state.value == "failed"]
                 if failed:
                     logging.error("Failed to restore %d baseline power settings", len(failed))
+            close_price = getattr(self.price, "close", None)
+            if close_price is not None:
+                close_price()
             self.repository.close()
+            if hasattr(self, "lock_file") and not self.lock_file.closed:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
             sd_notify("STOPPING=1\nSTATUS=PowerNap stopping")
 
 

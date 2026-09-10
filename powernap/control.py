@@ -111,16 +111,17 @@ class Controller:
     def yield_targets(self, targets) -> None:
         self.yielded_targets.update(targets)
 
-    def plan(self, profile: Profile) -> list[ControlOperation]:
+    def plan(self, profile: Profile, gpu_profile: Profile | None = None) -> list[ControlOperation]:
+        gpu_profile = profile if gpu_profile is None else gpu_profile
         operations: list[ControlOperation] = []
         if self.manage_cpu:
             operations.extend(self._cpu_plan(profile))
         if self.manage_powercap:
             operations.extend(self._powercap_plan(profile))
         if self.manage_nvidia:
-            operations.extend(self._nvidia_plan(profile))
+            operations.extend(self._nvidia_plan(gpu_profile))
         if self.manage_amdgpu:
-            operations.extend(self._amd_plan(profile))
+            operations.extend(self._amd_plan(gpu_profile))
         now = time.monotonic()
         filtered = [
             operation for operation in operations
@@ -229,11 +230,30 @@ class Controller:
     def _amd_plan(self, profile: Profile) -> list[ControlOperation]:
         operations = []
         level = {Profile.ECO: "low", Profile.BALANCED: "auto", Profile.RESPONSIVE: "auto", Profile.MAXIMUM: "high"}[profile]
+        profile_names = {
+            Profile.ECO: ("POWER_SAVING", "LOW"),
+            Profile.BALANCED: ("BOOTUP_DEFAULT", "3D_FULL_SCREEN"),
+            Profile.RESPONSIVE: ("3D_FULL_SCREEN", "COMPUTE"),
+            Profile.MAXIMUM: ("COMPUTE", "3D_FULL_SCREEN"),
+        }
         for gpu in self.capabilities.amd_gpus:
-            path = Path(gpu.path) / "power_dpm_force_performance_level"
+            device = Path(gpu.path)
+            path = device / "power_dpm_force_performance_level"
             current = read_text(path)
             if current is not None and current != level:
                 operations.append(ControlOperation("file", str(path), current, level, False))
+            profile_path = device / "pp_power_profile_mode"
+            target_mode = next((name for name in profile_names[profile] if name in gpu.profile_modes), None)
+            mode_ids = dict(gpu.profile_mode_ids) or {name: str(index) for index, name in enumerate(gpu.profile_modes)}
+            if target_mode is not None and target_mode in mode_ids:
+                operations.append(ControlOperation("file", str(profile_path), read_text(profile_path), mode_ids[target_mode], False))
+            if gpu.power_min_uw is not None and gpu.power_max_uw is not None and gpu.power_cap_uw is not None:
+                cap_path = next(iter(sorted((device / "hwmon").glob("hwmon*/power1_cap"))), None)
+                if cap_path is not None and gpu.power_max_uw >= gpu.power_min_uw:
+                    fraction = GPU_POWER_FRACTION[profile]
+                    target = round(gpu.power_min_uw + (gpu.power_max_uw - gpu.power_min_uw) * fraction)
+                    if target != gpu.power_cap_uw:
+                        operations.append(ControlOperation("file", str(cap_path), str(gpu.power_cap_uw), str(target), False))
         return operations
 
     def apply_transaction(self, operations: list[ControlOperation]) -> list[OperationResult]:

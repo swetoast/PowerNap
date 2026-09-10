@@ -67,6 +67,10 @@ class PriceContext:
     complete: bool = False
     coverage_ratio: float = 0.0
     gap_count: int = 0
+    current_day_complete: bool = False
+    current_day_coverage_ratio: float = 0.0
+    current_day_gap_count: int = 0
+    expected_day_seconds: int = 0
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,8 @@ class Decision:
     gpu_thermal_state: ThermalState = ThermalState.UNKNOWN
     cpu_safety_ceiling: Profile = Profile.BALANCED
     gpu_safety_ceiling: Profile = Profile.MAXIMUM
+    cpu_recommended: Profile = Profile.BALANCED
+    gpu_recommended: Profile = Profile.BALANCED
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -102,6 +108,8 @@ class Decision:
         data["gpu_thermal_state"] = self.gpu_thermal_state.value
         data["cpu_safety_ceiling"] = self.cpu_safety_ceiling.name.lower()
         data["gpu_safety_ceiling"] = self.gpu_safety_ceiling.name.lower()
+        data["cpu_recommended"] = self.cpu_recommended.name.lower()
+        data["gpu_recommended"] = self.gpu_recommended.name.lower()
         return data
 
 

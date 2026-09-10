@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 
 from powernap.config import Config
@@ -141,7 +142,7 @@ def _cycle_daemon(tmp_path, result_state):
     result = OperationResult(operation, "new" if result_state.value == "applied" else "old", result_state, None if result_state.value == "applied" else "failed")
     daemon.controller = SimpleNamespace(
         yielded_targets=set(),
-        plan=lambda profile: [operation],
+        plan=lambda profile, gpu_profile=None: [operation],
         apply_transaction=lambda operations: [result],
         transaction_summary=lambda results: {
             "state": "applied" if result_state.value == "applied" else "failed",
@@ -194,3 +195,95 @@ def test_full_daemon_cycle_required_failure_does_not_commit(tmp_path, monkeypatc
     assert daemon.needs_reconcile is True
     assert daemon.degraded_reason == "required control verification failed"
     assert records["meta"]["last_transaction"]["state"] == "failed"
+
+
+def test_sd_notify_returns_false_without_socket(monkeypatch):
+    from powernap.notify import sd_notify
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    assert sd_notify("READY=1") is False
+
+
+def test_sd_notify_sends_to_abstract_socket(monkeypatch):
+    from powernap.notify import sd_notify
+    calls = []
+    class Socket:
+        def connect(self, address): calls.append(("connect", address))
+        def sendall(self, payload): calls.append(("send", payload))
+        def close(self): calls.append(("close", None))
+    monkeypatch.setenv("NOTIFY_SOCKET", "@powernap")
+    monkeypatch.setattr("powernap.notify.socket.socket", lambda *args: Socket())
+    assert sd_notify("WATCHDOG=1") is True
+    assert calls == [("connect", "\0powernap"), ("send", b"WATCHDOG=1"), ("close", None)]
+
+
+def test_sd_notify_closes_socket_after_failure(monkeypatch):
+    from powernap.notify import sd_notify
+    closed = []
+    class Socket:
+        def connect(self, address): raise OSError("unavailable")
+        def sendall(self, payload): raise AssertionError("not reached")
+        def close(self): closed.append(True)
+    monkeypatch.setenv("NOTIFY_SOCKET", "/run/notify")
+    monkeypatch.setattr("powernap.notify.socket.socket", lambda *args: Socket())
+    assert sd_notify("READY=1") is False
+    assert closed == [True]
+
+
+def test_single_instance_lock_rejects_second_daemon(tmp_path, monkeypatch):
+    from powernap.capabilities import Capabilities
+    monkeypatch.setattr("powernap.daemon.discover", lambda: Capabilities())
+    monkeypatch.setattr("powernap.daemon.Repository.record_capabilities", lambda self, value: None)
+    cfg = Config(
+        database_path=str(tmp_path / "powernap.db"), dry_run=True,
+        manage_cpu=False, manage_nvidia=False, manage_amdgpu=False,
+    )
+    first = Daemon(cfg)
+    try:
+        with pytest.raises(RuntimeError, match="already running"):
+            Daemon(cfg)
+    finally:
+        first.price.close()
+        first.repository.close()
+        import fcntl
+        fcntl.flock(first.lock_file.fileno(), fcntl.LOCK_UN)
+        first.lock_file.close()
+
+
+def test_daemon_shutdown_closes_price_repository_and_lock(tmp_path, monkeypatch):
+    from powernap.model import ResultState
+    daemon, _ = _cycle_daemon(tmp_path, ResultState.APPLIED)
+    closed = []
+    daemon.price.close = lambda: closed.append("price")
+    daemon.repository.close = lambda: closed.append("repository")
+    lock = tmp_path / "lock"
+    daemon.lock_file = lock.open("a+")
+    monkeypatch.setattr("powernap.daemon.signal.signal", lambda *args: None)
+    monkeypatch.setattr("powernap.daemon.sd_notify", lambda message: None)
+    daemon.run(max_cycles=1)
+    assert closed == ["price", "repository"]
+    assert daemon.lock_file.closed is True
+
+
+def test_healthy_cycle_sends_watchdog_and_stopping_notifications(tmp_path, monkeypatch):
+    from powernap.model import ResultState
+    daemon, _ = _cycle_daemon(tmp_path, ResultState.APPLIED)
+    daemon.price.close = lambda: None
+    messages = []
+    monkeypatch.setattr("powernap.daemon.signal.signal", lambda *args: None)
+    monkeypatch.setattr("powernap.daemon.sd_notify", messages.append)
+    daemon.run(max_cycles=1)
+    assert messages[0].startswith("READY=1")
+    assert any(message.startswith("WATCHDOG=1") for message in messages)
+    assert messages[-1].startswith("STOPPING=1")
+
+
+def test_degraded_cycle_watchdog_reports_degraded_status(tmp_path, monkeypatch):
+    from powernap.model import ResultState
+    daemon, _ = _cycle_daemon(tmp_path, ResultState.FAILED)
+    daemon.price.close = lambda: None
+    messages = []
+    monkeypatch.setattr("powernap.daemon.signal.signal", lambda *args: None)
+    monkeypatch.setattr("powernap.daemon.sd_notify", messages.append)
+    daemon.run(max_cycles=1)
+    watchdog = next(message for message in messages if message.startswith("WATCHDOG=1"))
+    assert "Degraded: required control verification failed" in watchdog

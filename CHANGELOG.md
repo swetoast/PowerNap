@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.11.0
+
+- Added non-blocking single-instance locking tied to the configured database path.
+- Added PID recording in the active lock file and clean lock release during shutdown.
+- Added a clear process exit code when another PowerNap daemon already owns the instance lock.
+- Added deterministic cleanup for owned HTTP sessions while preserving injected test and caller sessions.
+- Added HTTP-session cleanup to daemon and one-shot CLI lifecycles.
+- Centralized the versioned status schema identifier.
+- Added healthy-cycle watchdog, degraded-cycle watchdog, readiness, and stopping lifecycle tests.
+- Added shutdown tests covering price, repository, and lock cleanup.
+- Documented the hardened-root privilege boundary and the validation gate required before introducing a privileged helper.
+- Expanded the regression suite to 119 tests.
+- Raised daemon branch coverage to 88 percent.
+- Raised measured branch coverage to 83.90 percent while retaining the 70 percent CI floor.
+
+## 0.10.0
+
+- Added labeled AMDGPU thermal selection with junction and hotspot priority.
+- Added validation that rejects implausible GPU temperature values.
+- Added bounded AMDGPU power-cap planning using discovered minimum and maximum limits.
+- Added AMDGPU profile-mode planning with the real driver-reported numeric mode identifier.
+- Added read-only Intel GPU discovery with duplicate DRM-device suppression.
+- Added read-only Intel GPU utilization and temperature observation.
+- Added independent CPU and GPU recommended profiles and controller targets.
+- Prevented a low GPU target from reducing an independently required CPU target.
+- Added regression fixtures for AMD labels, power caps, profile identifiers, Intel observation, and split control targets.
+- Expanded the regression suite to 113 tests.
+- Raised measured branch coverage to 82.91 percent while retaining the 70 percent CI floor.
+
+## 0.9.9
+
+- Added DST-aware complete-day validation using actual UTC duration between local midnights.
+- Added explicit complete-day coverage, gap count, and expected-day duration fields to price context.
+- Added verified 23-hour and 25-hour hourly DST fixtures.
+- Added verified 92-interval and 100-interval quarter-hour DST fixtures.
+- Added incomplete-day detection even when the immediate lookahead window is covered.
+- Added negative, zero, unusually high finite, and out-of-order price regression tests.
+- Fixed coverage calculations across DST boundaries by normalizing interval comparisons to UTC.
+- Added systemd notification success, abstract-socket, missing-socket, and failure cleanup tests.
+- Raised notification branch coverage to 100 percent.
+- Expanded the regression suite to 107 tests.
+- Raised measured branch coverage to 81.00 percent while retaining the 70 percent CI floor.
+
 ## 0.9.8
 
 - Added first-class aggregate transaction state to status and report output.

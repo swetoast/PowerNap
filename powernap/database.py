@@ -8,6 +8,8 @@ from pathlib import Path
 
 from .model import Decision, OperationResult, SystemState
 
+STATUS_SCHEMA_VERSION = 1
+
 
 class Repository:
     def __init__(self, path: Path):
@@ -216,7 +218,7 @@ class Repository:
             "events": [dict(row) | {"payload": json.loads(row["payload"])} for row in self.conn.execute(
                 "SELECT ts_ms,event_type,payload FROM events ORDER BY id DESC LIMIT ?", (limit,)
             )],
-            "status_schema": 1,
+            "status_schema": STATUS_SCHEMA_VERSION,
             "transaction": self.get_meta("last_transaction"),
             "applied_profile": self.get_meta("applied_profile"),
             "yielded_targets": self.get_meta("yielded_targets", []),

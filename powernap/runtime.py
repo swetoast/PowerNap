@@ -84,6 +84,20 @@ class Collector:
                 pass
         return result
 
+    @staticmethod
+    def _hwmon_temperature(hwmon: Path | None) -> float | None:
+        if hwmon is None:
+            return None
+        candidates = []
+        priority = {"junction": 0, "hotspot": 0, "edge": 1, "gpu": 1, "soc": 2}
+        for path in sorted(hwmon.glob("temp*_input")):
+            stem = path.name.removesuffix("_input")
+            label = (read_text(hwmon / f"{stem}_label") or "").lower()
+            value = read_int(path)
+            if value is not None and -40000 <= value <= 150000:
+                candidates.append((priority.get(label, 9), value / 1000.0))
+        return min(candidates)[1] if candidates else None
+
     def _amd(self) -> list[GPUState]:
         if not self.cfg.manage_amdgpu:
             return []
@@ -93,7 +107,7 @@ class Collector:
             hwmon = next(iter(sorted((device / "hwmon").glob("hwmon*"))), None)
             utilization = read_int(device / "gpu_busy_percent")
             memory = read_int(device / "mem_busy_percent")
-            temp = read_int(hwmon / "temp1_input") / 1000 if hwmon and read_int(hwmon / "temp1_input") is not None else None
+            temp = self._hwmon_temperature(hwmon)
             power = read_int(hwmon / "power1_average") if hwmon else None
             result.append(GPUState(
                 identity=gpu.pci_id,
@@ -103,6 +117,19 @@ class Collector:
                 temperature_c=temp,
                 power_w=power / 1_000_000 if power is not None else None,
                 power_limit_w=gpu.power_cap_uw / 1_000_000 if gpu.power_cap_uw is not None else None,
+            ))
+        return result
+
+    def _intel(self) -> list[GPUState]:
+        result = []
+        for gpu in self.capabilities.intel_gpus:
+            device = Path(gpu.path)
+            hwmon = next(iter(sorted((device / "hwmon").glob("hwmon*"))), None)
+            busy = read_int(device / "gpu_busy_percent")
+            result.append(GPUState(
+                identity=gpu.pci_id, vendor="intel",
+                utilization=float(busy) if busy is not None else None,
+                temperature_c=self._hwmon_temperature(hwmon),
             ))
         return result
 
@@ -127,7 +154,7 @@ class Collector:
         except Exception:
             iowait = 0.0
         temperature, source = self._temperature()
-        gpus = tuple(self._nvidia() + self._amd())
+        gpus = tuple(self._nvidia() + self._amd() + self._intel())
         return SystemState(
             datetime.now().astimezone().isoformat(timespec="seconds"),
             time.monotonic_ns(),

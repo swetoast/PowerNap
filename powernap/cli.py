@@ -42,7 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     if args.command == "run":
-        return Daemon(cfg).run()
+        try:
+            return Daemon(cfg).run()
+        except RuntimeError as exc:
+            logging.error("%s", exc)
+            return 3
     capabilities = discover()
     if args.command == "capabilities":
         print(json.dumps(capabilities.to_dict(), indent=2))
@@ -111,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         }, indent=2, default=str))
         return 0 if all(item.state.value in {"applied", "simulated"} for item in results) else 2
     finally:
+        if "service" in locals():
+            service.close()
         repository.close()
 
 

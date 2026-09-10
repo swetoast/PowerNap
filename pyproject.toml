@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "powernap-linux"
-version = "0.9.8"
+version = "0.11.0"
 description = "Capability-aware Linux power profile daemon"
 requires-python = ">=3.10"
 dependencies = ["psutil>=5.9", "requests>=2.28"]

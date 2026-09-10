@@ -231,3 +231,32 @@ def test_success_clears_target_retry_backoff(tmp_path):
     assert result[0].state == ResultState.APPLIED
     assert str(target) not in ctl.failure_counts
     assert str(target) not in ctl.retry_not_before
+
+
+def test_amd_plan_includes_bounded_power_cap_and_profile_mode(tmp_path):
+    from powernap.capabilities import AmdGPU
+    device = tmp_path / "0000:01:00.0"
+    hwmon = device / "hwmon" / "hwmon0"
+    hwmon.mkdir(parents=True)
+    (device / "power_dpm_force_performance_level").write_text("auto")
+    (device / "pp_power_profile_mode").write_text("BOOTUP_DEFAULT")
+    (hwmon / "power1_cap").write_text("50000000")
+    gpu = AmdGPU(str(device), "0000:01:00.0", "auto", ("BOOTUP_DEFAULT", "COMPUTE"), 50000000, 30000000, 90000000)
+    plan = Controller(Capabilities(amd_gpus=(gpu,)), True, False, False, True).plan(Profile.MAXIMUM)
+    targets = {Path(item.target).name: item.requested_value for item in plan}
+    assert targets["power_dpm_force_performance_level"] == "high"
+    assert targets["pp_power_profile_mode"] == "1"
+    assert targets["power1_cap"] == "90000000"
+
+
+def test_separate_gpu_profile_does_not_reduce_cpu_target(tmp_path):
+    policy = make_policy(tmp_path / "policy0", "1000000")
+    from powernap.capabilities import AmdGPU
+    device = tmp_path / "gpu"
+    device.mkdir()
+    (device / "power_dpm_force_performance_level").write_text("auto")
+    gpu = AmdGPU(str(device), "gpu", "auto", (), None, None, None)
+    plan = Controller(Capabilities(cpu_policies=(policy,), amd_gpus=(gpu,)), True, True, False, True).plan(Profile.MAXIMUM, Profile.ECO)
+    requested = {Path(item.target).name: item.requested_value for item in plan}
+    assert requested["scaling_max_freq"] == policy.hw_max_khz
+    assert requested["power_dpm_force_performance_level"] == "low"

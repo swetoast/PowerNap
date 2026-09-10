@@ -92,3 +92,31 @@ def test_amdgpu_discovery_deduplicates_cards_for_same_device(tmp_path):
     result = discover_amd(tmp_path)
     assert len(result) == 1
     assert result[0].pci_id == "0000:01:00.0"
+
+
+def test_intel_gpu_discovery_is_read_only_and_deduplicated(tmp_path):
+    from powernap.capabilities import discover_intel
+    device = tmp_path / "devices" / "0000:00:02.0"
+    write(device / "vendor", "0x8086")
+    drm = tmp_path / "class" / "drm"
+    drm.mkdir(parents=True)
+    for name in ("card0", "card1"):
+        card = drm / name
+        card.mkdir()
+        (card / "device").symlink_to(device, target_is_directory=True)
+    result = discover_intel(tmp_path)
+    assert len(result) == 1
+    assert result[0].pci_id == "0000:00:02.0"
+
+
+def test_amdgpu_discovery_preserves_profile_mode_ids(tmp_path):
+    from powernap.capabilities import discover_amd
+    device = tmp_path / "devices" / "0000:01:00.0"
+    write(device / "vendor", "0x1002")
+    write(device / "pp_power_profile_mode", "0 BOOTUP_DEFAULT\n5 COMPUTE *\n")
+    card = tmp_path / "class" / "drm" / "card0"
+    card.mkdir(parents=True)
+    (card / "device").symlink_to(device, target_is_directory=True)
+    gpu = discover_amd(tmp_path)[0]
+    assert gpu.profile_modes == ("BOOTUP_DEFAULT", "COMPUTE")
+    assert gpu.profile_mode_ids == (("BOOTUP_DEFAULT", "0"), ("COMPUTE", "5"))

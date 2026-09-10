@@ -49,10 +49,16 @@ class PriceService:
         self.provider = provider
         self.fallback = fallback if fallback != provider else None
         self.cache_hours = cache_hours
+        self._owns_session = session is None
         self.session = session or requests.Session()
         self.repository = repository
         self.cache: dict[date, tuple[float, list[PricePoint]]] = {}
         self._load_persisted()
+
+    def close(self) -> None:
+        if self._owns_session:
+            self.session.close()
+            self._owns_session = False
 
     def _load_persisted(self) -> None:
         if self.repository is None:
@@ -153,24 +159,35 @@ class PriceService:
         equal = sum(item == value for item in values)
         return max(0.0, min(1.0, (lower + max(0, equal - 1) / 2) / (len(values) - 1)))
 
+    def _day_bounds(self, day: date) -> tuple[datetime, datetime]:
+        start = datetime.combine(day, datetime.min.time(), self.tz)
+        end = datetime.combine(day + timedelta(days=1), datetime.min.time(), self.tz)
+        return start, end
+
     @staticmethod
     def _coverage(points: list[PricePoint], start: datetime, end: datetime) -> tuple[float, int]:
-        relevant = sorted((p for p in points if p.end > start and p.start < end), key=lambda p: p.start)
-        cursor = start
+        utc = ZoneInfo("UTC")
+        start_utc = start.astimezone(utc)
+        end_utc = end.astimezone(utc)
+        relevant = sorted(
+            (point for point in points if point.end.astimezone(utc) > start_utc and point.start.astimezone(utc) < end_utc),
+            key=lambda point: point.start.astimezone(utc),
+        )
+        cursor = start_utc
         covered = 0.0
         gaps = 0
         for point in relevant:
-            clipped_start = max(start, point.start)
-            clipped_end = min(end, point.end)
+            clipped_start = max(start_utc, point.start.astimezone(utc))
+            clipped_end = min(end_utc, point.end.astimezone(utc))
             if clipped_start > cursor:
                 gaps += 1
             effective_start = max(cursor, clipped_start)
             if clipped_end > effective_start:
                 covered += (clipped_end - effective_start).total_seconds()
                 cursor = clipped_end
-        if cursor < end:
+        if cursor < end_utc:
             gaps += 1
-        total = max(1.0, (end - start).total_seconds())
+        total = max(1.0, (end_utc - start_utc).total_seconds())
         return min(1.0, covered / total), gaps
 
     @staticmethod
@@ -205,8 +222,7 @@ class PriceService:
             return PriceContext()
         provider = current.provider
         points = [point for point in all_points if point.provider == provider]
-        day_start = datetime.combine(local_now.date(), datetime.min.time(), self.tz)
-        day_end = day_start + timedelta(days=1)
+        day_start, day_end = self._day_bounds(local_now.date())
         day_points = [point for point in points if point.end > day_start and point.start < day_end]
         if not day_points:
             return PriceContext()
@@ -216,6 +232,8 @@ class PriceService:
         future_mean = self._duration_weighted_mean(points, future_start, end)
         future_rank = self._percentile_rank(future_mean, values) if future_mean is not None else None
         coverage_ratio, gap_count = self._coverage(points, local_now, end)
+        day_coverage_ratio, day_gap_count = self._coverage(day_points, day_start, day_end)
+        current_day_complete = day_coverage_ratio >= 0.999 and day_gap_count == 0
         fetched = [self.cache[required_day][0] for required_day in days if required_day in self.cache]
         cache_age = max(0.0, time.time() - min(fetched)) if fetched else None
         fresh = cache_age is not None and cache_age <= self.cache_hours * 3600
@@ -233,5 +251,9 @@ class PriceService:
             complete=complete,
             coverage_ratio=coverage_ratio,
             gap_count=gap_count,
+            current_day_complete=current_day_complete,
+            current_day_coverage_ratio=day_coverage_ratio,
+            current_day_gap_count=day_gap_count,
+            expected_day_seconds=int((day_end.astimezone(ZoneInfo("UTC")) - day_start.astimezone(ZoneInfo("UTC"))).total_seconds()),
         )
 

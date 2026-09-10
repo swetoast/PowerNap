@@ -102,7 +102,10 @@ class DecisionEngine:
         ceiling = min(cpu_ceiling, gpu_ceiling)
         severity = {ThermalState.UNKNOWN: -1, ThermalState.NORMAL: 0, ThermalState.WARM: 1, ThermalState.HOT: 2, ThermalState.CRITICAL: 3}
         thermal = max((cpu_thermal, gpu_thermal), key=lambda item: severity[item])
-        recommended = Profile(min(max(int(preference), int(floor)), int(ceiling)))
+        cpu_recommended = Profile(min(max(int(preference), int(floor)), int(cpu_ceiling)))
+        gpu_floor = Profile.RESPONSIVE if gpu_score >= 35 else Profile.BALANCED if gpu_score >= 15 else Profile.ECO
+        gpu_recommended = Profile(min(max(int(preference), int(gpu_floor)), int(gpu_ceiling)))
+        recommended = min(cpu_recommended, gpu_recommended) if state.gpus else cpu_recommended
         if thermal == ThermalState.CRITICAL:
             reason = "Thermal Protect requires Eco immediately."
         elif thermal == ThermalState.UNKNOWN and recommended == ceiling:
@@ -115,7 +118,7 @@ class DecisionEngine:
             reason = f"{recommended.name.title()} selected from current demand and price opportunity."
         return Decision(
             round(demand, 1), round(gpu_score, 1), floor, preference, ceiling, recommended, thermal, reason,
-            cpu_thermal, gpu_thermal, cpu_ceiling, gpu_ceiling,
+            cpu_thermal, gpu_thermal, cpu_ceiling, gpu_ceiling, cpu_recommended, gpu_recommended,
         )
 
 

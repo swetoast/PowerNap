@@ -74,6 +74,13 @@ class NvidiaGPU:
 
 
 @dataclass(frozen=True)
+class IntelGPU:
+    path: str
+    pci_id: str
+    driver: str | None
+
+
+@dataclass(frozen=True)
 class AmdGPU:
     path: str
     pci_id: str
@@ -82,6 +89,7 @@ class AmdGPU:
     power_cap_uw: int | None
     power_min_uw: int | None
     power_max_uw: int | None
+    profile_mode_ids: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,7 @@ class Capabilities:
     powercap_zones: tuple[PowerCapZone, ...] = ()
     nvidia_gpus: tuple[NvidiaGPU, ...] = ()
     amd_gpus: tuple[AmdGPU, ...] = ()
+    intel_gpus: tuple[IntelGPU, ...] = ()
     kernel_cmdline: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,10 +252,13 @@ def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
         seen_devices.add(device_key)
         hwmon = next(iter(sorted((device / "hwmon").glob("hwmon*"))), None)
         modes = []
+        mode_ids = []
         for line in (read_text(device / "pp_power_profile_mode") or "").splitlines():
             parts = line.replace("*", "").split()
             if len(parts) > 1 and parts[0].rstrip(":").isdigit():
+                mode_id = parts[0].rstrip(":")
                 modes.append(parts[1])
+                mode_ids.append((parts[1], mode_id))
         result.append(AmdGPU(
             path=str(device),
             pci_id=device.resolve().name,
@@ -255,7 +267,25 @@ def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
             power_cap_uw=read_int(hwmon / "power1_cap") if hwmon else None,
             power_min_uw=read_int(hwmon / "power1_cap_min") if hwmon else None,
             power_max_uw=read_int(hwmon / "power1_cap_max") if hwmon else None,
+            profile_mode_ids=tuple(mode_ids),
         ))
+    return tuple(result)
+
+
+def discover_intel(root: Path = Path("/sys")) -> tuple[IntelGPU, ...]:
+    result = []
+    seen: set[str] = set()
+    for card in sorted((root / "class/drm").glob("card[0-9]*")):
+        device = card / "device"
+        if read_text(device / "vendor") != "0x8086":
+            continue
+        key = str(device.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        driver_link = device / "driver"
+        driver = driver_link.resolve().name if driver_link.exists() else None
+        result.append(IntelGPU(str(device), device.resolve().name, driver))
     return tuple(result)
 
 
@@ -266,5 +296,6 @@ def discover(root: Path = Path("/sys"), proc_root: Path = Path("/proc")) -> Capa
         powercap_zones=discover_powercap(root),
         nvidia_gpus=discover_nvidia(),
         amd_gpus=discover_amd(root),
+        intel_gpus=discover_intel(root),
         kernel_cmdline=read_text(proc_root / "cmdline") or "",
     )

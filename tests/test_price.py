@@ -172,3 +172,106 @@ def test_context_marks_gap_as_incomplete(monkeypatch):
     assert context.quality == "incomplete"
     assert context.fresh is False
     assert context.coverage_ratio < 1.0
+
+
+def local_day_points(service, day, minutes, provider="test"):
+    start, end = service._day_bounds(day)
+    points = []
+    cursor = start.astimezone(timezone.utc)
+    end_utc = end.astimezone(timezone.utc)
+    step = timedelta(minutes=minutes)
+    while cursor < end_utc:
+        points.append(PricePoint(cursor, min(cursor + step, end_utc), float(len(points)), provider))
+        cursor += step
+    return points
+
+
+def test_spring_dst_day_has_23_hourly_intervals_and_is_complete(monkeypatch):
+    s = service()
+    day = date(2026, 3, 29)
+    points = local_day_points(s, day, 60)
+    assert len(points) == 23
+    s.cache[day] = (10**20, points)
+    monkeypatch.setattr(s, "ensure", lambda requested: None)
+    context = s.context(datetime(2026, 3, 29, 12, tzinfo=timezone.utc), 1)
+    assert context.current_day_complete is True
+    assert context.current_day_coverage_ratio == 1.0
+    assert context.expected_day_seconds == 23 * 3600
+
+
+def test_autumn_dst_day_has_25_hourly_intervals_and_is_complete(monkeypatch):
+    s = service()
+    day = date(2026, 10, 25)
+    points = local_day_points(s, day, 60)
+    assert len(points) == 25
+    s.cache[day] = (10**20, points)
+    monkeypatch.setattr(s, "ensure", lambda requested: None)
+    context = s.context(datetime(2026, 10, 25, 12, tzinfo=timezone.utc), 1)
+    assert context.current_day_complete is True
+    assert context.expected_day_seconds == 25 * 3600
+
+
+def test_spring_dst_quarter_hour_day_has_92_intervals():
+    s = service()
+    assert len(local_day_points(s, date(2026, 3, 29), 15)) == 92
+
+
+def test_autumn_dst_quarter_hour_day_has_100_intervals():
+    s = service()
+    assert len(local_day_points(s, date(2026, 10, 25), 15)) == 100
+
+
+def test_incomplete_day_is_reported_even_when_current_lookahead_is_covered(monkeypatch):
+    s = service()
+    day = date(2026, 9, 10)
+    start, _ = s._day_bounds(day)
+    points = [PricePoint(start + timedelta(hours=12), start + timedelta(hours=14), 1.0, "test")]
+    s.cache[day] = (10**20, points)
+    monkeypatch.setattr(s, "ensure", lambda requested: None)
+    context = s.context(start + timedelta(hours=12, minutes=30), 1)
+    assert context.complete is True
+    assert context.current_day_complete is False
+    assert context.current_day_coverage_ratio < 1.0
+    assert context.current_day_gap_count > 0
+
+
+def test_fetch_accepts_negative_zero_and_extreme_finite_prices():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    payload = [
+        row(start, start + timedelta(hours=1), -1.0),
+        row(start + timedelta(hours=1), start + timedelta(hours=2), 0.0),
+        row(start + timedelta(hours=2), start + timedelta(hours=3), 1000000.0),
+    ]
+    points = service(Session([payload])).fetch_day(start.date(), "elpris_eu")
+    assert [point.sek_kwh for point in points] == [-1.0, 0.0, 1000000.0]
+
+
+def test_fetch_sorts_out_of_order_intervals():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    payload = [
+        row(start + timedelta(hours=1), start + timedelta(hours=2), 2.0),
+        row(start, start + timedelta(hours=1), 1.0),
+    ]
+    points = service(Session([payload])).fetch_day(start.date(), "elpris_eu")
+    assert [point.sek_kwh for point in points] == [1.0, 2.0]
+
+
+def test_owned_http_session_is_closed_once(monkeypatch):
+    closed = []
+    class OwnedSession:
+        def close(self): closed.append(True)
+    monkeypatch.setattr("powernap.price.requests.Session", OwnedSession)
+    s = service()
+    s.close()
+    s.close()
+    assert closed == [True]
+
+
+def test_injected_http_session_is_not_closed():
+    class BorrowedSession:
+        def __init__(self): self.closed = False
+        def close(self): self.closed = True
+    session = BorrowedSession()
+    s = service(session)
+    s.close()
+    assert session.closed is False

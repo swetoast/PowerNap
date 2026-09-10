@@ -48,3 +48,24 @@ def test_sustained_activity_waits_for_history_warmup(monkeypatch):
     for _ in range(5):
         state = collector.collect()
     assert state.cpu.sustained_ratio == 1.0
+
+
+def test_hwmon_temperature_prefers_labeled_junction(tmp_path):
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "temp1_input").write_text("55000")
+    (hwmon / "temp1_label").write_text("edge")
+    (hwmon / "temp2_input").write_text("72000")
+    (hwmon / "temp2_label").write_text("junction")
+    assert Collector._hwmon_temperature(hwmon) == 72.0
+
+
+def test_intel_gpu_observation_is_read_only(tmp_path):
+    from powernap.capabilities import IntelGPU
+    device = tmp_path / "0000:00:02.0"
+    device.mkdir()
+    (device / "gpu_busy_percent").write_text("42")
+    collector = Collector(Config(), Capabilities(intel_gpus=(IntelGPU(str(device), "0000:00:02.0", "i915"),)))
+    result = collector._intel()
+    assert result[0].vendor == "intel"
+    assert result[0].utilization == 42.0
