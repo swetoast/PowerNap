@@ -4,7 +4,7 @@ PowerNap is a local, capability-aware Linux power-management daemon. It balances
 
 PowerNap is profile-centric rather than governor-centric. It selects an abstract operating profile, then maps that profile to the controls the current system actually supports. A machine may use CPUFreq governors and frequency ceilings, another may expose energy-performance preferences, and a GPU may provide a bounded power limit. Unsupported controls are reported and skipped instead of guessed.
 
-> **Project status:** PowerNap 0.11.3 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. CPU governor and frequency-ceiling writes across all twelve acpi-cpufreq policies, plus NVIDIA power-limit write, readback, and restoration through NVML, have been validated on the target Ubuntu host. Other physical control paths remain under validation.
+> **Project status:** PowerNap 0.11.4 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. CPU governor and frequency-ceiling writes across all twelve acpi-cpufreq policies, plus NVIDIA power-limit write, readback, and restoration through NVML, have been validated on the target Ubuntu host. Other physical control paths remain under validation.
 
 ## Table of contents
 
@@ -446,7 +446,7 @@ Hardware integration testing must be performed explicitly because automated test
 ### Verified in the packaged build
 
 - Python module compilation
-- 119 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
+- 121 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
 - One-shot dry-run execution
 - JSON validation for one-shot, capability, and check output
 - Final ZIP integrity and content inspection

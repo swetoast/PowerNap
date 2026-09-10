@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.4
+
+- Added permanent regression coverage for release-version consistency.
+- Verified that `powernap.__version__`, package metadata, the README project status, and the newest changelog heading use the same version.
+- Verified that the CLI version output and installed distribution metadata match the package version.
+- Updated automated regression coverage from 119 to 121 tests.
+- Retained the completed CPUFreq and NVIDIA real-hardware validation evidence from 0.11.3.
+
 ## 0.11.3
 
 - Completed real-hardware NVIDIA power-limit validation on the refreshed Ubuntu target.

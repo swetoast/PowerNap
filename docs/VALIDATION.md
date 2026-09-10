@@ -3,7 +3,7 @@
 ## Automated checks completed
 
 - Python bytecode compilation for every package module
-- 119 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
+- 121 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
 - Measured 83.90 percent branch coverage with a 70 percent CI minimum
 - Clean virtual-environment installation and console entry-point smoke test
 - One-shot installed-package dry-run with JSON validation
