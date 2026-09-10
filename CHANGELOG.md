@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.5
+
+- Added discovery of driver-advertised CPU frequency steps from `scaling_available_frequencies`.
+- Snapped planned CPU maximum-frequency targets to the nearest advertised step when discrete frequencies are exposed.
+- Preserved continuous bounded targets when the driver does not expose a frequency table.
+- Added regression tests for both discrete-step and continuous CPUFreq planning.
+- Recorded successful real-host dry-run planning on Linux 6.8.0-138-generic with twelve acpi-cpufreq policies and the validated GTX TITAN X.
+- Updated automated regression coverage from 121 to 123 tests.
+- Retained exact write/readback verification after selecting a driver-supported target.
+
 ## 0.11.4
 
 - Added permanent regression coverage for release-version consistency.

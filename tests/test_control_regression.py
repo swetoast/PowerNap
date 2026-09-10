@@ -260,3 +260,32 @@ def test_separate_gpu_profile_does_not_reduce_cpu_target(tmp_path):
     requested = {Path(item.target).name: item.requested_value for item in plan}
     assert requested["scaling_max_freq"] == policy.hw_max_khz
     assert requested["power_dpm_force_performance_level"] == "low"
+
+
+def test_frequency_target_snaps_to_nearest_advertised_step(tmp_path):
+    path = tmp_path / "policy0"
+    policy = make_policy(path, "2501000")
+    policy = CPUFreqPolicy(
+        policy.path,
+        policy.affected_cpus,
+        policy.driver,
+        policy.governors,
+        policy.governor,
+        policy.min_khz,
+        policy.max_khz,
+        policy.hw_min_khz,
+        policy.hw_max_khz,
+        policy.epp_available,
+        policy.epp,
+        (800000, 1800000, 2100000, 2501000),
+    )
+    plan = Controller(Capabilities(cpu_policies=(policy,)), True, True, False, False).plan(Profile.BALANCED)
+    frequency = next(item for item in plan if item.target.endswith("scaling_max_freq"))
+    assert frequency.requested_value == 2100000
+
+
+def test_frequency_target_remains_continuous_when_steps_are_not_exposed(tmp_path):
+    policy = make_policy(tmp_path / "policy0", "2501000")
+    plan = Controller(Capabilities(cpu_policies=(policy,)), True, True, False, False).plan(Profile.BALANCED)
+    frequency = next(item for item in plan if item.target.endswith("scaling_max_freq"))
+    assert frequency.requested_value == 2075000

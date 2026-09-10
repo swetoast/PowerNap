@@ -42,6 +42,7 @@ class CPUFreqPolicy:
     hw_max_khz: int | None
     epp_available: tuple[str, ...]
     epp: str | None
+    available_frequencies_khz: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,11 @@ def discover_cpu(root: Path = Path("/sys")) -> tuple[CPUFreqPolicy, ...]:
             hw_max_khz=read_int(path / "cpuinfo_max_freq"),
             epp_available=tuple((read_text(path / "energy_performance_available_preferences") or "").split()),
             epp=read_text(path / "energy_performance_preference"),
+            available_frequencies_khz=tuple(
+                sorted(
+                    {int(value) for value in (read_text(path / "scaling_available_frequencies") or "").split()}
+                )
+            ),
         ))
     return tuple(result)
 

@@ -174,6 +174,11 @@ class Controller:
             if policy.hw_min_khz is not None and policy.hw_max_khz is not None:
                 target_max = round(policy.hw_min_khz + (policy.hw_max_khz - policy.hw_min_khz) * FREQUENCY_FRACTION[profile])
                 target_max = max(policy.hw_min_khz, min(policy.hw_max_khz, target_max))
+                if policy.available_frequencies_khz:
+                    target_max = min(
+                        policy.available_frequencies_khz,
+                        key=lambda frequency: (abs(frequency - target_max), frequency),
+                    )
             target_epp = next((item for item in EPP[profile] if item in policy.epp_available), None)
 
             try:

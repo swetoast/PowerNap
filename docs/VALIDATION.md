@@ -3,7 +3,7 @@
 ## Automated checks completed
 
 - Python bytecode compilation for every package module
-- 121 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
+- 123 regression tests covering configuration, capability fixtures, CLI behavior, CPU and GPU control planning, control ordering, dry-run isolation, rollback, transitions, thermal ceilings and recovery, electricity-price intervals, provider fallback, stale cache behavior, SQLite migration, workload discovery, packaging, and telemetry mapping
 - Measured 83.90 percent branch coverage with a 70 percent CI minimum
 - Clean virtual-environment installation and console entry-point smoke test
 - One-shot installed-package dry-run with JSON validation
@@ -16,7 +16,7 @@
 Validation host:
 
 - Ubuntu 22.04.5 LTS on bare metal
-- Linux kernel 6.2.16-060216-generic
+- Linux kernel 6.8.0-138-generic
 - Intel Core i5-12400 with 12 logical CPUs
 - `acpi-cpufreq` driver with twelve independent policy directories
 - Supported governors: conservative, ondemand, userspace, powersave, performance, and schedutil
@@ -74,6 +74,23 @@ Post-restoration health evidence:
 
 This verifies NVIDIA NVML power-limit write, readback, restoration, and immediate post-test health on the GTX TITAN X with driver 580.178.04. It does not validate other NVIDIA models or drivers, sustained-load behavior, service-driven application, suspend/resume, or reboot persistence.
 - No AMDGPU or active Intel GPU was present on the validation host.
+
+
+Successful installed-command dry run on the validation host:
+
+- Collected CPU temperature at 33 C from coretemp Package id 0.
+- Collected GTX TITAN X temperature at 35 C, 0 percent utilization, 16.354 W draw, and a 150 W limit.
+- Retrieved a fresh and complete SE3 price context from elprisetjustnu.
+- Selected the balanced profile and simulated all planned operations without changing hardware.
+- Confirmed all twelve CPU policies remained at the ondemand governor and 2501000 kHz maximum.
+- Confirmed the NVIDIA power limit remained at 150 W.
+
+CPU frequency-step handling:
+
+- PowerNap now discovers `scaling_available_frequencies` when the active driver exposes it.
+- Planned maximum-frequency targets are snapped to the nearest advertised step before applying a transaction.
+- Drivers without an advertised frequency table retain bounded continuous targets.
+- Readback remains exact because the requested value is selected from the driver-supported table when one is available.
 
 ## Not yet verified
 
