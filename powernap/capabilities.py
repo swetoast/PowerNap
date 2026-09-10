@@ -232,10 +232,15 @@ def discover_nvidia() -> tuple[NvidiaGPU, ...]:
 
 def discover_amd(root: Path = Path("/sys")) -> tuple[AmdGPU, ...]:
     result = []
+    seen_devices: set[str] = set()
     for card in sorted((root / "class/drm").glob("card[0-9]*")):
         device = card / "device"
         if read_text(device / "vendor") != "0x1002":
             continue
+        device_key = str(device.resolve())
+        if device_key in seen_devices:
+            continue
+        seen_devices.add(device_key)
         hwmon = next(iter(sorted((device / "hwmon").glob("hwmon*"))), None)
         modes = []
         for line in (read_text(device / "pp_power_profile_mode") or "").splitlines():

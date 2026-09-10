@@ -144,3 +144,65 @@ def test_powercap_external_change_can_yield_only_that_constraint(tmp_path):
     assert str(target) in changes
     controller.yield_targets(changes)
     assert controller.plan(Profile.ECO) == []
+
+
+def test_transaction_summary_reports_optional_failure_as_partial():
+    required = ControlOperation("file", "/required", "a", "b", True)
+    optional = ControlOperation("file", "/optional", "a", "b", False)
+    results = [
+        OperationResult(required, "b", ResultState.APPLIED),
+        OperationResult(optional, "a", ResultState.FAILED, "denied"),
+    ]
+    summary = Controller.transaction_summary(results)
+    assert summary["state"] == "partially_applied"
+    assert summary["failed_required"] == 0
+    assert summary["failed_optional"] == 1
+
+
+def test_transaction_summary_reports_required_failure():
+    operation = ControlOperation("file", "/required", "a", "b", True)
+    summary = Controller.transaction_summary([
+        OperationResult(operation, "a", ResultState.FAILED, "denied")
+    ])
+    assert summary["state"] == "failed"
+    assert summary["failed_required"] == 1
+
+
+def test_transaction_summary_reports_dry_run():
+    operation = ControlOperation("file", "/value", "a", "b", True)
+    summary = Controller.transaction_summary([
+        OperationResult(operation, "a", ResultState.SIMULATED)
+    ])
+    assert summary["state"] == "simulated"
+
+
+def test_global_cpu_upscale_orders_all_limits_before_policy_changes(tmp_path):
+    first = make_policy(tmp_path / "policy0", "1000000")
+    second = make_policy(tmp_path / "policy1", "1000000")
+    plan = Controller(Capabilities(cpu_policies=(first, second)), True, True, False, False).plan(Profile.MAXIMUM)
+    names = [Path(item.target).name for item in plan]
+    last_limit = max(i for i, name in enumerate(names) if name == "scaling_max_freq")
+    first_governor = min(i for i, name in enumerate(names) if name == "scaling_governor")
+    assert last_limit < first_governor
+
+
+def test_global_cpu_downscale_orders_policy_changes_before_all_limits(tmp_path):
+    first = make_policy(tmp_path / "policy0")
+    second = make_policy(tmp_path / "policy1")
+    plan = Controller(Capabilities(cpu_policies=(first, second)), True, True, False, False).plan(Profile.ECO)
+    names = [Path(item.target).name for item in plan]
+    last_governor = max(i for i, name in enumerate(names) if name == "scaling_governor")
+    first_limit = min(i for i, name in enumerate(names) if name == "scaling_max_freq")
+    assert last_governor < first_limit
+
+
+def test_powercap_only_selects_one_named_long_term_constraint(tmp_path):
+    from powernap.capabilities import PowerCapConstraint, PowerCapZone
+    short = tmp_path / "constraint_0_power_limit_uw"; short.write_text("50000000")
+    long = tmp_path / "constraint_1_power_limit_uw"; long.write_text("60000000")
+    zone = PowerCapZone(str(tmp_path), "package-0", True, (
+        PowerCapConstraint(str(short), "short_term", 50000000, 10000000, 90000000, 1000000),
+        PowerCapConstraint(str(long), "long_term", 60000000, 10000000, 90000000, 28000000),
+    ))
+    plan = Controller(Capabilities(powercap_zones=(zone,)), True, False, False, False, True).plan(Profile.ECO)
+    assert [item.target for item in plan] == [str(long)]

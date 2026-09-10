@@ -62,6 +62,11 @@ class PriceContext:
     trend: float | None = None
     fresh: bool = False
     provider: str | None = None
+    cache_age_seconds: float | None = None
+    quality: str = "unavailable"
+    complete: bool = False
+    coverage_ratio: float = 0.0
+    gap_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,12 +88,20 @@ class Decision:
     recommended: Profile
     thermal_state: ThermalState
     reason: str
+    cpu_thermal_state: ThermalState = ThermalState.UNKNOWN
+    gpu_thermal_state: ThermalState = ThermalState.UNKNOWN
+    cpu_safety_ceiling: Profile = Profile.BALANCED
+    gpu_safety_ceiling: Profile = Profile.MAXIMUM
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         for key in ("demand_floor", "efficiency_preference", "safety_ceiling", "recommended"):
             data[key] = Profile(data[key]).name.lower()
         data["thermal_state"] = self.thermal_state.value
+        data["cpu_thermal_state"] = self.cpu_thermal_state.value
+        data["gpu_thermal_state"] = self.gpu_thermal_state.value
+        data["cpu_safety_ceiling"] = self.cpu_safety_ceiling.name.lower()
+        data["gpu_safety_ceiling"] = self.gpu_safety_ceiling.name.lower()
         return data
 
 

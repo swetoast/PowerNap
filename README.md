@@ -4,7 +4,7 @@ PowerNap is a local, capability-aware Linux power-management daemon. It balances
 
 PowerNap is profile-centric rather than governor-centric. It selects an abstract operating profile, then maps that profile to the controls the current system actually supports. A machine may use CPUFreq governors and frequency ceilings, another may expose energy-performance preferences, and a GPU may provide a bounded power limit. Unsupported controls are reported and skipped instead of guessed.
 
-> **Project status:** PowerNap 0.9.4 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. Physical CPU and GPU control has not been validated on every supported hardware path.
+> **Project status:** PowerNap 0.9.7 is a pre-release intended for dry-run validation and hardware testing. The supplied configuration has `dry_run = true`. Physical CPU and GPU control has not been validated on every supported hardware path.
 
 ## Table of contents
 
@@ -45,24 +45,24 @@ Electricity price influences discretionary headroom. It does not override therma
 
 - Abstract Eco, Balanced, Responsive, and Maximum profiles
 - Immediate thermal protection for critical conditions
-- CPU demand calculated from average use, peak-core use, busy-core ratio, normalized load, and sustained activity
+- CPU demand calculated from average use, peak-core use, busy-core ratio, normalized load, and warmed-up sustained activity
 - GPU demand from utilization, memory activity, and video engines when available
 - Swedish electricity prices through Elpris.eu with Elpriset Just Nu as an optional fallback
-- Hourly and quarter-hour price interval handling
+- Hourly and quarter-hour price intervals with provider isolation, gap detection, and duration-weighted lookahead
 - Capability discovery before control planning
-- Multiple CPUFreq policy support
+- Multiple CPUFreq policy support with direction-aware global operation ordering
 - CPU governor, frequency ceiling, and energy-performance preference planning
 - NVIDIA telemetry and hardware-bounded power limits through NVML
 - AMDGPU discovery and documented performance-level control
 - Powercap and RAPL discovery
-- Correct component-specific thermal sensor selection
+- Separate CPU and GPU thermal states and safety ceilings
 - Protected-process minimum profiles
-- Candidate-based transitions with faster promotion and delayed relaxation
+- Candidate-based transitions with faster promotion, delayed relaxation, and restart-safe state
 - External-setting conflict detection
 - Read-back verification after changes
 - Required-operation rollback after failure
 - Baseline restoration on shutdown
-- SQLite history for samples, decisions, and control events
+- SQLite history for samples, decisions, control events, capability snapshots, price intervals, and transition state
 - JSON output for automation and diagnostics
 - systemd readiness and watchdog notifications
 - Dry-run mode enabled by default
@@ -447,7 +447,7 @@ Hardware integration testing must be performed explicitly because automated test
 ### Verified in the packaged build
 
 - Python module compilation
-- 68 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
+- 90 regression tests with measured branch coverage, covering capabilities, configuration, CLI behavior, control ordering, rollback, dry-run isolation, thermal safety and recovery, transitions, electricity prices, database migration, workloads, packaging, and telemetry
 - One-shot dry-run execution
 - JSON validation for one-shot, capability, and check output
 - Final ZIP integrity and content inspection
@@ -459,7 +459,7 @@ Hardware integration testing must be performed explicitly because automated test
 - Long-term service stability on a broad hardware set
 - systemd watchdog behavior on every distribution
 - Live price-provider behavior in every network environment
-- The design target of 85 percent branch coverage, because the packaging environment did not include `pytest-cov`
+- The design target of 85 percent branch coverage. Current measured branch coverage is 75.09 percent
 
 See [docs/VALIDATION.md](docs/VALIDATION.md) for the exact validation record.
 
@@ -469,7 +469,7 @@ Before a 1.0 release, the project needs:
 
 - Real-hardware validation for each advertised writable adapter
 - Wider tests for hourly, quarter-hour, DST, missing, duplicate, overlapping, and out-of-order price intervals
-- Broader stale-price quality reporting and cache-corruption recovery
+- Cache-corruption recovery and additional price-quality diagnostics
 - Expanded AMDGPU and Intel GPU validation
 - Physical RAPL application and restoration tests on supported hardware
 - Service installation and upgrade tests

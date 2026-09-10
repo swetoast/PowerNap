@@ -1,23 +1,40 @@
 [Unit]
 Description=PowerNap Linux power profile manager
-After=network-online.target
+Documentation=https://github.com/OWNER/powernap
 Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/powernap/powernap.conf
 
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/powernap --config /etc/powernap/powernap.conf run
 Restart=on-failure
-RestartSec=10
-WatchdogSec=30
-TimeoutStopSec=20
+RestartSec=10s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+WatchdogSec=30s
+
+User=root
+Group=root
+UMask=0027
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/powernap -/sys/devices/system/cpu/cpufreq -/sys/class/drm -/sys/class/powercap
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/powernap
+ReadWritePaths=-/sys/devices/system/cpu/cpufreq
+ReadWritePaths=-/sys/class/drm
+ReadWritePaths=-/sys/class/powercap
 
 [Install]
 WantedBy=multi-user.target

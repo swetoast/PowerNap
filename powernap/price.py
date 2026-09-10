@@ -153,32 +153,85 @@ class PriceService:
         equal = sum(item == value for item in values)
         return max(0.0, min(1.0, (lower + max(0, equal - 1) / 2) / (len(values) - 1)))
 
+    @staticmethod
+    def _coverage(points: list[PricePoint], start: datetime, end: datetime) -> tuple[float, int]:
+        relevant = sorted((p for p in points if p.end > start and p.start < end), key=lambda p: p.start)
+        cursor = start
+        covered = 0.0
+        gaps = 0
+        for point in relevant:
+            clipped_start = max(start, point.start)
+            clipped_end = min(end, point.end)
+            if clipped_start > cursor:
+                gaps += 1
+            effective_start = max(cursor, clipped_start)
+            if clipped_end > effective_start:
+                covered += (clipped_end - effective_start).total_seconds()
+                cursor = clipped_end
+        if cursor < end:
+            gaps += 1
+        total = max(1.0, (end - start).total_seconds())
+        return min(1.0, covered / total), gaps
+
+    @staticmethod
+    def _duration_weighted_mean(points: list[PricePoint], start: datetime, end: datetime) -> float | None:
+        weighted = duration = 0.0
+        for point in points:
+            overlap = max(0.0, (min(end, point.end) - max(start, point.start)).total_seconds())
+            if overlap:
+                weighted += point.sek_kwh * overlap
+                duration += overlap
+        return weighted / duration if duration else None
+
     def context(self, now: datetime | None = None, lookahead_hours: int = 3) -> PriceContext:
         local_now = (now or datetime.now(self.tz)).astimezone(self.tz)
         end = local_now + timedelta(hours=lookahead_hours)
-        required_days = tuple(dict.fromkeys((local_now.date(), end.date())))
-        for day in required_days:
+        days = []
+        day = local_now.date()
+        while day <= end.date():
+            days.append(day)
+            day += timedelta(days=1)
+        for required_day in days:
             try:
-                self.ensure(day)
+                self.ensure(required_day)
             except RuntimeError as exc:
-                logging.warning("Price data unavailable for %s: %s", day, exc)
-        points = sorted(
-            (point for day in required_days for point in self.cache.get(day, (0, []))[1]),
+                logging.warning("Price data unavailable for %s: %s", required_day, exc)
+        all_points = sorted(
+            (point for required_day in days for point in self.cache.get(required_day, (0, []))[1]),
             key=lambda point: point.start,
         )
-        current = next((point for point in points if point.start <= local_now < point.end), None)
-        day_points = [point for point in points if point.start.astimezone(self.tz).date() == local_now.date()]
-        if current is None or not day_points:
+        current = next((point for point in all_points if point.start <= local_now < point.end), None)
+        if current is None:
+            return PriceContext()
+        provider = current.provider
+        points = [point for point in all_points if point.provider == provider]
+        day_start = datetime.combine(local_now.date(), datetime.min.time(), self.tz)
+        day_end = day_start + timedelta(days=1)
+        day_points = [point for point in points if point.end > day_start and point.start < day_end]
+        if not day_points:
             return PriceContext()
         values = [point.sek_kwh for point in day_points]
         rank = self._percentile_rank(current.sek_kwh, values)
-        future = [point.sek_kwh for point in points if local_now < point.start < end]
-        future_rank = self._percentile_rank(mean(future), values) if future else None
+        future_start = current.end
+        future_mean = self._duration_weighted_mean(points, future_start, end)
+        future_rank = self._percentile_rank(future_mean, values) if future_mean is not None else None
+        coverage_ratio, gap_count = self._coverage(points, local_now, end)
+        fetched = [self.cache[required_day][0] for required_day in days if required_day in self.cache]
+        cache_age = max(0.0, time.time() - min(fetched)) if fetched else None
+        fresh = cache_age is not None and cache_age <= self.cache_hours * 3600
+        complete = coverage_ratio >= 0.999 and gap_count == 0
+        quality = "fresh" if fresh and complete else "incomplete" if fresh else "stale"
         return PriceContext(
             current_sek_kwh=current.sek_kwh,
             rank=rank,
             future_rank=future_rank,
             trend=None if future_rank is None else future_rank - rank,
-            fresh=time.time() - self.cache[local_now.date()][0] <= self.cache_hours * 3600,
-            provider=current.provider,
+            fresh=fresh and complete,
+            provider=provider,
+            cache_age_seconds=cache_age,
+            quality=quality,
+            complete=complete,
+            coverage_ratio=coverage_ratio,
+            gap_count=gap_count,
         )
+

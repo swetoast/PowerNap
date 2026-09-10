@@ -77,3 +77,18 @@ def test_cpu_inventory_handles_missing_proc_data(tmp_path):
     assert info.logical_cpus == 0
     assert info.physical_cores is None
     assert info.online_cpus == ()
+
+
+def test_amdgpu_discovery_deduplicates_cards_for_same_device(tmp_path):
+    from powernap.capabilities import discover_amd
+    device = tmp_path / "devices" / "pci0000:00" / "0000:01:00.0"
+    write(device / "vendor", "0x1002")
+    drm = tmp_path / "class" / "drm"
+    drm.mkdir(parents=True)
+    for name in ("card0", "card1"):
+        card = drm / name
+        card.mkdir()
+        (card / "device").symlink_to(device, target_is_directory=True)
+    result = discover_amd(tmp_path)
+    assert len(result) == 1
+    assert result[0].pci_id == "0000:01:00.0"

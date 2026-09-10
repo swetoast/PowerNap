@@ -112,7 +112,11 @@ class Collector:
         peak = max(per_cpu, default=0.0)
         busy_ratio = sum(item >= self.cfg.busy_core_threshold for item in per_cpu) / max(1, len(per_cpu))
         self.history.append(average)
-        sustained = sum(item >= 65 for item in self.history) / len(self.history)
+        warmup_samples = min(self.cfg.history_samples, 6)
+        sustained = (
+            sum(item >= 65 for item in self.history) / len(self.history)
+            if len(self.history) >= warmup_samples else 0.0
+        )
         cores = psutil.cpu_count(logical=True) or 1
         try:
             load = os.getloadavg()[0] / cores

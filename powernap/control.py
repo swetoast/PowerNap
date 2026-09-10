@@ -118,7 +118,37 @@ class Controller:
             operations.extend(self._nvidia_plan(profile))
         if self.manage_amdgpu:
             operations.extend(self._amd_plan(profile))
-        return [operation for operation in operations if self.operation_key(operation) not in self.yielded_targets]
+        filtered = [operation for operation in operations if self.operation_key(operation) not in self.yielded_targets]
+        return self._order_operations(filtered, profile)
+
+    @staticmethod
+    def _order_operations(operations: list[ControlOperation], profile: Profile) -> list[ControlOperation]:
+        def numeric(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        limit_names = {"scaling_max_freq", "power_limit_w"}
+        limit_changes = []
+        for item in operations:
+            name = Path(item.target).name if item.adapter == "file" else "power_limit_w"
+            if name in limit_names or name.endswith("_power_limit_uw"):
+                old, new = numeric(item.old_value), numeric(item.requested_value)
+                if old is not None and new is not None and new != old:
+                    limit_changes.append(new > old)
+        increasing = any(limit_changes) if limit_changes else profile > Profile.BALANCED
+
+        def priority(item):
+            name = Path(item.target).name if item.adapter == "file" else "power_limit_w"
+            limit = name in limit_names or name.endswith("_power_limit_uw")
+            policy = name in {"scaling_governor", "energy_performance_preference", "power_dpm_force_performance_level"}
+            if increasing:
+                group = 0 if limit else 1 if policy else 2
+            else:
+                group = 0 if policy else 1 if limit else 2
+            return group, item.target
+        return sorted(operations, key=priority)
 
     def _cpu_plan(self, profile: Profile) -> list[ControlOperation]:
         operations = []
@@ -158,7 +188,11 @@ class Controller:
         for zone in self.capabilities.powercap_zones:
             if zone.enabled is False:
                 continue
-            for constraint in zone.constraints:
+            eligible = [
+                constraint for constraint in zone.constraints
+                if constraint.name.lower() in {"long_term", "long term", "slow", "package"}
+            ]
+            for constraint in eligible[:1]:
                 if constraint.power_limit_uw is None:
                     continue
                 minimum = constraint.min_power_uw
@@ -208,6 +242,42 @@ class Controller:
                 results.extend(rollback)
                 break
         return results
+
+    @staticmethod
+    def transaction_summary(results: list[OperationResult]) -> dict:
+        counts = {state.value: 0 for state in ResultState}
+        for result in results:
+            counts[result.state.value] += 1
+        failed_required = sum(
+            1 for result in results
+            if result.operation.required and result.state == ResultState.FAILED
+        )
+        failed_optional = sum(
+            1 for result in results
+            if not result.operation.required and result.state == ResultState.FAILED
+        )
+        rollback_results = [
+            result for result in results
+            if not result.operation.required and result.operation.old_value == result.operation.requested_value
+        ]
+        if failed_required:
+            state = "failed"
+        elif failed_optional:
+            state = "partially_applied"
+        elif counts[ResultState.SIMULATED.value]:
+            state = "simulated"
+        elif counts[ResultState.UNSUPPORTED.value]:
+            state = "partially_applied"
+        else:
+            state = "applied"
+        return {
+            "state": state,
+            "operations": len(results),
+            "counts": counts,
+            "failed_required": failed_required,
+            "failed_optional": failed_optional,
+            "rollback_failures": sum(item.state == ResultState.FAILED for item in rollback_results),
+        }
 
     def _remember(self, result: OperationResult) -> None:
         key = self.operation_key(result.operation)

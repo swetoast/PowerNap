@@ -31,4 +31,21 @@ def test_transition_gradual_change_can_commit():
     manager = TransitionManager(cfg, Profile.BALANCED)
     d = Decision(60, 0, Profile.RESPONSIVE, Profile.RESPONSIVE, Profile.MAXIMUM, Profile.RESPONSIVE, ThermalState.NORMAL, "test")
     assert not manager.evaluate(d, now=100).allowed
-    assert manager.evaluate(d, now=105).allowed
+    accepted = manager.evaluate(d, now=105)
+    assert accepted.allowed
+    manager.commit(accepted.profile, now=105)
+    assert manager.current == Profile.RESPONSIVE
+
+
+def test_price_trend_avoids_escalating_before_sharply_higher_prices():
+    cpu = CPUState(1, 2, 0, 0, 0, 0, 35, "cpu")
+    price = PriceContext(rank=0.1, future_rank=0.8, trend=0.7, fresh=True, complete=True, quality="fresh")
+    decision = DecisionEngine(Config()).decide(state(cpu, price))
+    assert decision.efficiency_preference == Profile.BALANCED
+
+
+def test_price_trend_avoids_deep_saving_before_sharply_lower_prices():
+    cpu = CPUState(1, 2, 0, 0, 0, 0, 35, "cpu")
+    price = PriceContext(rank=0.9, future_rank=0.2, trend=-0.7, fresh=True, complete=True, quality="fresh")
+    decision = DecisionEngine(Config()).decide(state(cpu, price))
+    assert decision.efficiency_preference == Profile.BALANCED

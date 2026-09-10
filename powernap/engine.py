@@ -14,7 +14,7 @@ def clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
 class DecisionEngine:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self._previous_thermal = ThermalState.UNKNOWN
+        self._previous_thermal = {"cpu": ThermalState.UNKNOWN, "gpu": ThermalState.UNKNOWN}
 
     def thermal_state(self, temperature: float | None) -> ThermalState:
         if temperature is None:
@@ -27,12 +27,12 @@ class DecisionEngine:
             return ThermalState.WARM
         return ThermalState.NORMAL
 
-    def _thermal_with_hysteresis(self, temperature: float | None) -> ThermalState:
+    def _thermal_with_hysteresis(self, temperature: float | None, component: str = "cpu") -> ThermalState:
         raw = self.thermal_state(temperature)
         if temperature is None:
-            self._previous_thermal = ThermalState.UNKNOWN
+            self._previous_thermal[component] = ThermalState.UNKNOWN
             return ThermalState.UNKNOWN
-        previous = self._previous_thermal
+        previous = self._previous_thermal[component]
         recovery = self.cfg.thermal_recovery_c
         if previous == ThermalState.CRITICAL and raw != ThermalState.CRITICAL and temperature >= self.cfg.critical_temp_c - recovery:
             result = ThermalState.CRITICAL
@@ -42,7 +42,7 @@ class DecisionEngine:
             result = ThermalState.WARM
         else:
             result = raw
-        self._previous_thermal = result
+        self._previous_thermal[component] = result
         return result
 
     def decide(self, state: SystemState) -> Decision:
@@ -81,17 +81,27 @@ class DecisionEngine:
             preference = Profile.RESPONSIVE
         else:
             preference = Profile.BALANCED
+        if state.price.trend is not None:
+            if preference == Profile.ECO and state.price.trend <= -0.25:
+                preference = Profile.BALANCED
+            elif preference == Profile.RESPONSIVE and state.price.trend >= 0.25:
+                preference = Profile.BALANCED
 
-        temperatures = [value for value in [cpu.temperature_c, *(gpu.temperature_c for gpu in state.gpus)] if value is not None]
-        hottest = max(temperatures) if temperatures else None
-        thermal = self._thermal_with_hysteresis(hottest)
-        ceiling = {
+        gpu_temperatures = [gpu.temperature_c for gpu in state.gpus if gpu.temperature_c is not None]
+        cpu_thermal = self._thermal_with_hysteresis(cpu.temperature_c, "cpu")
+        gpu_thermal = self._thermal_with_hysteresis(max(gpu_temperatures) if gpu_temperatures else None, "gpu")
+        ceiling_map = {
             ThermalState.CRITICAL: Profile.ECO,
             ThermalState.HOT: Profile.BALANCED,
             ThermalState.WARM: Profile.RESPONSIVE,
             ThermalState.NORMAL: Profile.MAXIMUM,
             ThermalState.UNKNOWN: Profile.BALANCED,
-        }[thermal]
+        }
+        cpu_ceiling = ceiling_map[cpu_thermal]
+        gpu_ceiling = Profile.MAXIMUM if gpu_thermal == ThermalState.UNKNOWN else ceiling_map[gpu_thermal]
+        ceiling = min(cpu_ceiling, gpu_ceiling)
+        severity = {ThermalState.UNKNOWN: -1, ThermalState.NORMAL: 0, ThermalState.WARM: 1, ThermalState.HOT: 2, ThermalState.CRITICAL: 3}
+        thermal = max((cpu_thermal, gpu_thermal), key=lambda item: severity[item])
         recommended = Profile(min(max(int(preference), int(floor)), int(ceiling)))
         if thermal == ThermalState.CRITICAL:
             reason = "Thermal Protect requires Eco immediately."
@@ -103,7 +113,10 @@ class DecisionEngine:
             reason = f"{ceiling.name.title()} is the thermal safety ceiling."
         else:
             reason = f"{recommended.name.title()} selected from current demand and price opportunity."
-        return Decision(round(demand, 1), round(gpu_score, 1), floor, preference, ceiling, recommended, thermal, reason)
+        return Decision(
+            round(demand, 1), round(gpu_score, 1), floor, preference, ceiling, recommended, thermal, reason,
+            cpu_thermal, gpu_thermal, cpu_ceiling, gpu_ceiling,
+        )
 
 
 @dataclass(frozen=True)
@@ -127,9 +140,7 @@ class TransitionManager:
         current_time = time.monotonic() if now is None else now
         desired = decision.recommended
         if decision.thermal_state == ThermalState.CRITICAL:
-            changed = desired != self.current
-            self._commit(desired, current_time)
-            return TransitionResult(desired, changed, "critical thermal override")
+            return TransitionResult(desired, desired != self.current, "critical thermal override")
         if desired == self.current:
             self.candidate = desired
             self.candidate_samples = 0
@@ -150,8 +161,40 @@ class TransitionManager:
                 return TransitionResult(self.current, False, "minimum profile residence active")
             if current_time - self.candidate_since < self.cfg.relax_seconds:
                 return TransitionResult(self.current, False, "relaxation candidate not stable long enough")
-        self._commit(desired, current_time)
         return TransitionResult(desired, True, "transition accepted")
+
+    def commit(self, profile: Profile, now: float | None = None) -> None:
+        self._commit(profile, time.monotonic() if now is None else now)
+
+    def export_state(self, now: float | None = None) -> dict:
+        current_time = time.monotonic() if now is None else now
+        return {
+            "current": self.current.name.lower(),
+            "candidate": self.candidate.name.lower(),
+            "candidate_samples": self.candidate_samples,
+            "candidate_age_seconds": max(0.0, current_time - self.candidate_since),
+            "residence_age_seconds": max(0.0, current_time - self.last_change),
+        }
+
+    @classmethod
+    def from_state(cls, cfg: Config, state: dict | None, now: float | None = None) -> "TransitionManager":
+        current_time = time.monotonic() if now is None else now
+        if not isinstance(state, dict):
+            return cls(cfg, now=current_time)
+        try:
+            current = Profile[state.get("current", "balanced").upper()]
+            candidate = Profile[state.get("candidate", current.name.lower()).upper()]
+            samples = max(0, int(state.get("candidate_samples", 0)))
+            candidate_age = max(0.0, float(state.get("candidate_age_seconds", 0.0)))
+            residence_age = max(0.0, float(state.get("residence_age_seconds", 0.0)))
+        except (KeyError, TypeError, ValueError):
+            return cls(cfg, now=current_time)
+        manager = cls(cfg, current, current_time)
+        manager.candidate = candidate
+        manager.candidate_samples = samples
+        manager.candidate_since = current_time - candidate_age
+        manager.last_change = current_time - residence_age
+        return manager
 
     def _commit(self, profile: Profile, now: float) -> None:
         self.current = profile

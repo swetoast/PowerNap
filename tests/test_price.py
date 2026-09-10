@@ -97,3 +97,78 @@ def test_persisted_prices_are_loaded_on_restart(tmp_path, monkeypatch):
     s = PriceService("SE3", "Europe/Stockholm", 5, "elpris_eu", "elprisetjustnu", 36, repository=repo)
     assert any(point.sek_kwh == 1.5 for _, points in s.cache.values() for point in points)
     repo.close()
+
+
+def test_price_context_reports_fresh_cache_age_and_quality(monkeypatch):
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    svc = service(Session([[row(start, start + timedelta(hours=1), 1.0)]]))
+    monkeypatch.setattr("powernap.price.time.time", lambda: 1000.0)
+    svc.cache[start.date()] = (900.0, [PricePoint(start, start + timedelta(hours=1), 1.0, "test")])
+    context = svc.context(now=start + timedelta(minutes=30), lookahead_hours=1)
+    assert context.fresh is False
+    assert context.quality == "incomplete"
+    assert context.cache_age_seconds == 100.0
+    assert context.complete is False
+
+
+def test_price_context_reports_stale_cache_explicitly(monkeypatch):
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    svc = service(Session([]))
+    svc.cache_hours = 1
+    svc.cache[start.date()] = (0.0, [PricePoint(start, start + timedelta(hours=1), 1.0, "persisted")])
+    monkeypatch.setattr("powernap.price.time.time", lambda: 7200.0)
+    context = svc.context(now=start + timedelta(minutes=30), lookahead_hours=1)
+    assert context.fresh is False
+    assert context.quality == "stale"
+    assert context.cache_age_seconds == 7200.0
+
+
+def test_context_fetches_every_intermediate_date(monkeypatch):
+    s = service()
+    now = datetime(2026, 9, 10, 12, tzinfo=timezone.utc)
+    called = []
+    monkeypatch.setattr(s, "ensure", lambda day: called.append(day))
+    s.context(now, 60)
+    assert called == [date(2026, 9, 10), date(2026, 9, 11), date(2026, 9, 12), date(2026, 9, 13)]
+
+
+def test_context_does_not_mix_providers(monkeypatch):
+    s = service()
+    now = datetime(2026, 9, 10, 0, 30, tzinfo=timezone.utc)
+    primary = PricePoint(now.replace(minute=0), now.replace(minute=0)+timedelta(hours=1), 1.0, "primary")
+    fallback = PricePoint(now.replace(minute=0)+timedelta(hours=1), now.replace(minute=0)+timedelta(hours=2), 9.0, "fallback")
+    s.cache[now.date()] = (10**20, [primary, fallback])
+    monkeypatch.setattr(s, "ensure", lambda day: None)
+    context = s.context(now, 2)
+    assert context.provider == "primary"
+    assert context.future_rank is None
+    assert context.complete is False
+    assert context.gap_count > 0
+
+
+def test_context_duration_weights_future_intervals(monkeypatch):
+    s = service()
+    now = datetime(2026, 9, 10, 0, 15, tzinfo=timezone.utc)
+    points = [
+        PricePoint(now.replace(minute=0), now.replace(minute=0)+timedelta(hours=1), 1.0, "p"),
+        PricePoint(now.replace(minute=0)+timedelta(hours=1), now.replace(minute=0)+timedelta(hours=2), 4.0, "p"),
+        PricePoint(now.replace(minute=0)+timedelta(hours=2), now.replace(minute=0)+timedelta(hours=2, minutes=15), 16.0, "p"),
+    ]
+    s.cache[now.date()] = (10**20, points)
+    monkeypatch.setattr(s, "ensure", lambda day: None)
+    context = s.context(now, 2)
+    assert context.future_rank is not None
+    assert context.coverage_ratio == 1.0
+    assert context.complete is True
+
+
+def test_context_marks_gap_as_incomplete(monkeypatch):
+    s = service()
+    now = datetime(2026, 9, 10, 0, 15, tzinfo=timezone.utc)
+    points = [PricePoint(now.replace(minute=0), now.replace(minute=0)+timedelta(minutes=30), 1.0, "p")]
+    s.cache[now.date()] = (10**20, points)
+    monkeypatch.setattr(s, "ensure", lambda day: None)
+    context = s.context(now, 1)
+    assert context.quality == "incomplete"
+    assert context.fresh is False
+    assert context.coverage_ratio < 1.0

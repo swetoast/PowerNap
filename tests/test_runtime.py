@@ -35,3 +35,16 @@ def test_disabled_gpu_collection_returns_empty():
     collector = Collector(Config(manage_nvidia=False, manage_amdgpu=False))
     assert collector._nvidia() == []
     assert collector._amd() == []
+
+
+def test_sustained_activity_waits_for_history_warmup(monkeypatch):
+    collector = Collector(Config(history_samples=12, manage_nvidia=False, manage_amdgpu=False))
+    monkeypatch.setattr("powernap.runtime.psutil.cpu_percent", lambda interval, percpu: [90.0, 90.0])
+    monkeypatch.setattr("powernap.runtime.psutil.cpu_count", lambda logical: 2)
+    monkeypatch.setattr("powernap.runtime.psutil.cpu_times_percent", lambda interval: type("T", (), {"iowait": 0})())
+    monkeypatch.setattr("powernap.runtime.os.getloadavg", lambda: (0, 0, 0))
+    monkeypatch.setattr(collector, "_temperature", lambda: (40.0, "cpu"))
+    assert collector.collect().cpu.sustained_ratio == 0.0
+    for _ in range(5):
+        state = collector.collect()
+    assert state.cpu.sustained_ratio == 1.0

@@ -27,7 +27,8 @@ class Daemon:
         self.repository.record_capabilities(self.capabilities)
         self.collector = Collector(cfg, self.capabilities)
         self.engine = DecisionEngine(cfg)
-        self.transition = TransitionManager(cfg)
+        self.transition = TransitionManager.from_state(cfg, self.repository.get_meta("transition_state"))
+        self.simulated_transition = TransitionManager.from_state(cfg, self.repository.get_meta("simulated_transition_state"))
         self.controller = Controller(
             self.capabilities,
             cfg.dry_run,
@@ -95,20 +96,39 @@ class Daemon:
                 price = self.price.context(lookahead_hours=self.cfg.lookahead_hours)
                 state = self.collector.collect(price)
                 decision = self._protect_workload(self.engine.decide(state))
-                gate = self.transition.evaluate(decision)
+                transition = self.simulated_transition if self.cfg.dry_run else self.transition
+                gate = transition.evaluate(decision)
                 results = []
                 reapply = self._resolve_external_changes()
+                transaction = self.controller.transaction_summary(results)
                 if gate.allowed or self.needs_reconcile or reapply:
-                    target_profile = Profile.BALANCED if self.degraded_reason else gate.profile
+                    if decision.thermal_state.value == "critical":
+                        target_profile = Profile.ECO
+                    elif self.degraded_reason:
+                        target_profile = min(Profile.BALANCED, decision.safety_ceiling)
+                    else:
+                        target_profile = gate.profile
                     results = self.controller.apply_transaction(self.controller.plan(target_profile))
-                    required_failures = [item for item in results if item.operation.required and item.state.value == "failed"]
-                    self.needs_reconcile = bool(required_failures)
-                    if required_failures:
+                    transaction = self.controller.transaction_summary(results)
+                    required_failures = transaction["failed_required"] > 0
+                    self.needs_reconcile = required_failures
+                    if not required_failures:
+                        transition.commit(target_profile)
+                        if not self.cfg.dry_run:
+                            actual = self.controller.snapshot()
+                            conflicts = self.controller.external_changes(actual)
+                            if conflicts:
+                                self.needs_reconcile = True
+                                self.degraded_reason = "post-transaction reconciliation failed"
+                            elif self.degraded_reason in {"required control verification failed", "post-transaction reconciliation failed"}:
+                                self.degraded_reason = None
+                    else:
                         self.degraded_reason = "required control verification failed"
-                    elif self.degraded_reason == "required control verification failed":
-                        self.degraded_reason = None
                 try:
                     self.repository.record_cycle(state, decision, results)
+                    self.repository.set_meta("transition_state", self.transition.export_state())
+                    self.repository.set_meta("simulated_transition_state", self.simulated_transition.export_state())
+                    self.repository.set_meta("last_transaction", transaction)
                     if self.degraded_reason == "database unavailable":
                         self.degraded_reason = None
                 except RuntimeError as exc:
@@ -154,6 +174,13 @@ class Daemon:
         for target, value in self.controller.expected_state.items():
             self.baseline.setdefault(target, value)
         self.transition = TransitionManager(self.cfg, self.transition.current)
+        simulated = getattr(self, "simulated_transition", None)
+        self.simulated_transition = TransitionManager(
+            self.cfg, simulated.current if simulated is not None else self.transition.current
+        )
+        history = getattr(self.collector, "history", None)
+        if history is not None:
+            history.clear()
         self.needs_reconcile = True
 
     def _interruptible_sleep(self, duration: float) -> None:
